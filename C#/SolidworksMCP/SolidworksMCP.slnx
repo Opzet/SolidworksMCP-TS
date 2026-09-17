@@ -1,0 +1,40 @@
+<Solution>
+  <Folder Name="/Typescript Documents/">
+    <File Path="../../docs/ADAPTER_ARCHITECTURE.md" />
+    <File Path="../../docs/ANALYSIS_INDEX.md" />
+    <File Path="../../docs/ARCHITECTURE_ANALYSIS.md" />
+    <File Path="../../docs/EDGEJSBRIDGE_COMPREHENSIVE_ANALYSIS.md" />
+    <File Path="../../docs/IMPLEMENTATION_GUIDE.md" />
+    <File Path="../../docs/INNOVATION_SUMMARY.md" />
+    <File Path="../../docs/INTELLIGENT_ARCHITECTURE_ROUTING.md" />
+    <File Path="../../docs/RELEASE_SUMMARY.md" />
+    <File Path="../../docs/VERSION_COMPATIBILITY.md" />
+  </Folder>
+  <Folder Name="/Typescript Source/">
+    <Project Path="../../src/" Type="Website" DisplayName="src">
+      <BuildType Project="Debug" />
+      <Properties Name="WebsiteProperties">
+        <Property Name="Debug.AspNetCompiler.Debug" Value="&quot;True&quot;" />
+        <Property Name="Debug.AspNetCompiler.FixedNames" Value="&quot;false&quot;" />
+        <Property Name="Debug.AspNetCompiler.ForceOverwrite" Value="&quot;true&quot;" />
+        <Property Name="Debug.AspNetCompiler.PhysicalPath" Value="&quot;..\..\src\&quot;" />
+        <Property Name="Debug.AspNetCompiler.TargetPath" Value="&quot;PrecompiledWeb\localhost_60228\&quot;" />
+        <Property Name="Debug.AspNetCompiler.Updateable" Value="&quot;true&quot;" />
+        <Property Name="Debug.AspNetCompiler.VirtualPath" Value="&quot;/localhost_60228&quot;" />
+        <Property Name="Release.AspNetCompiler.Debug" Value="&quot;False&quot;" />
+        <Property Name="Release.AspNetCompiler.FixedNames" Value="&quot;false&quot;" />
+        <Property Name="Release.AspNetCompiler.ForceOverwrite" Value="&quot;true&quot;" />
+        <Property Name="Release.AspNetCompiler.PhysicalPath" Value="&quot;..\..\src\&quot;" />
+        <Property Name="Release.AspNetCompiler.TargetPath" Value="&quot;PrecompiledWeb\localhost_60228\&quot;" />
+        <Property Name="Release.AspNetCompiler.Updateable" Value="&quot;true&quot;" />
+        <Property Name="Release.AspNetCompiler.VirtualPath" Value="&quot;/localhost_60228&quot;" />
+        <Property Name="TargetFrameworkMoniker" Value="&quot;.NETFramework,Version%3Dv4.8&quot;" />
+        <Property Name="VWDPort" Value="&quot;60228&quot;" />
+      </Properties>
+    </Project>
+  </Folder>
+  <Project Path="../SolidworksChatClient/SolidworksChatClient.csproj" />
+  <Project Path="../SolidworksMCP.Tests/SolidworksMCP.Tests.csproj" />
+  <Project Path="SolidworksMCP.csproj" />`r`n  `r`n</Solution>
+
+

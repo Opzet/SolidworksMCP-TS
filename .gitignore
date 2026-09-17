@@ -60,3 +60,12 @@ venv/
 __pycache__/
 *.pyc
 EOF < /dev/null
+/.vs
+/.github/copilot-instructions.md
+/C#/SolidworksChatClient/bin/Debug
+/C#/SolidworksChatClient/obj
+/C#/SolidworksMCP/.vs
+/C#/SolidworksMCP/bin/Debug/net9.0
+/C#/SolidworksMCP/obj
+/C#/SolidworksMCP.Tests/bin/Debug/net9.0
+/C#/SolidworksMCP.Tests/obj
