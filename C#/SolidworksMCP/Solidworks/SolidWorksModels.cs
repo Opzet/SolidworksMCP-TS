@@ -24,6 +24,44 @@ public sealed record SolidWorksFeature
     public bool Suppressed { get; init; }
 }
 
+public sealed record SelectionSpec
+{
+    public IReadOnlyList<int>? Faces { get; init; }
+
+    public IReadOnlyList<int>? Edges { get; init; }
+
+    public IReadOnlyList<int>? Vertices { get; init; }
+
+    public IReadOnlyList<string>? Planes { get; init; }
+
+    public IReadOnlyList<string>? Axes { get; init; }
+
+    public IReadOnlyList<string>? Sketches { get; init; }
+
+    public IReadOnlyList<int>? SketchSegments { get; init; }
+
+    public IReadOnlyList<int>? SketchPoints { get; init; }
+
+    public string? SketchName { get; init; }
+
+    public IReadOnlyList<string>? Features { get; init; }
+
+    public IReadOnlyList<string>? Components { get; init; }
+}
+
+public sealed record EntityDescriptor
+{
+    public required int Index { get; init; }
+
+    public required string Kind { get; init; }
+
+    public required string Name { get; init; }
+
+    public string? Type { get; init; }
+
+    public string? Handle { get; init; }
+}
+
 public sealed record SolidWorksDrawing
 {
     public required string Name { get; init; }

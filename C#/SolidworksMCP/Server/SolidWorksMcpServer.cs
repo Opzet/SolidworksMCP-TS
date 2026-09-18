@@ -21,7 +21,7 @@ public sealed class SolidWorksMcpServer
     {
         configuration = AppConfiguration.LoadFromEnvironment();
         AppLogger.Configure(configuration.LogLevel);
-        api = new SolidWorksApi();
+        api = new SolidWorksApi(configuration.OutputRoot);
         stateStore = new ResourceStateStore(configuration.StateFile);
         macroRecorder = new MacroRecorder();
         cacheManager = new CacheManager(1000, TimeSpan.FromHours(1));

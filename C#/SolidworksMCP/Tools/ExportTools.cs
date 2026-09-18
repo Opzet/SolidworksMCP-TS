@@ -110,7 +110,31 @@ public static class ExportTools
                 success = model.GetType().GetMethod("SaveAs3")?.Invoke(model, [outputPath, 0, 2]) is bool saved && saved;
             }
 
-            return ValueTask.FromResult<object?>(success ? ToolHelpers.SuccessText($"Captured screenshot to: {outputPath}") : ToolHelpers.Failure($"Export completed but file not found at: {outputPath}"));
+            if (!success || !File.Exists(outputPath))
+            {
+                return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Export completed but file not found at: {outputPath}"));
+            }
+
+            var mediaType = ext switch
+            {
+                ".bmp" => "image/bmp",
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".tif" or ".tiff" => "image/tiff",
+                _ => "application/octet-stream",
+            };
+
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = true,
+                ["message"] = $"Captured screenshot to: {outputPath}",
+                ["outputPath"] = outputPath,
+                ["mediaType"] = mediaType,
+                ["width"] = width,
+                ["height"] = height,
+                ["kind"] = "screenshot",
+                ["feedbackEligible"] = true,
+            }));
         }
         catch (Exception ex)
         {

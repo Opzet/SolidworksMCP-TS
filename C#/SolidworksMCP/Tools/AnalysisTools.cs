@@ -9,10 +9,20 @@ public static class AnalysisTools
     public static IReadOnlyList<McpToolDefinition> GetTools() =>
     [
         new McpToolDefinition("get_mass_properties", "Get mass properties of the current model", JsonSchemaBuilder.Object(("units", JsonSchemaBuilder.Enum(["kg", "g", "lb"], "Mass units", "kg"))), HandleGetMassProperties),
+        new McpToolDefinition("list_bodies", "List solid bodies in the active model", JsonSchemaBuilder.Object(), HandleListBodies),
+        new McpToolDefinition("list_faces", "List faces in the active model for stable selection planning", JsonSchemaBuilder.Object(("surface_type", JsonSchemaBuilder.String("Optional surface type filter")), ("min_area_mm2", JsonSchemaBuilder.Number("Optional minimum area in mm^2"))), HandleListFaces),
+        new McpToolDefinition("list_edges", "List edges in the active model for stable selection planning", JsonSchemaBuilder.Object(("curve_type", JsonSchemaBuilder.String("Optional curve type filter")), ("min_length_mm", JsonSchemaBuilder.Number("Optional minimum length in mm")), ("max_length_mm", JsonSchemaBuilder.Number("Optional maximum length in mm"))), HandleListEdges),
+        new McpToolDefinition("list_vertices", "List vertices in the active model for stable selection planning", JsonSchemaBuilder.Object(), HandleListVertices),
+        new McpToolDefinition("list_features", "List the feature tree of the active document", JsonSchemaBuilder.Object(), HandleListFeatures),
+        new McpToolDefinition("get_bounding_box", "Get the overall bounding box of the active model", JsonSchemaBuilder.Object(), HandleGetBoundingBox),
+        new McpToolDefinition("measure", "Measure entities using declarative selection", JsonSchemaBuilder.ObjectWithRequired(["selection"], ("selection", JsonSchemaBuilder.Any("Declarative selection object"))), HandleMeasure),
+        new McpToolDefinition("check_errors", "Rebuild and report document error state", JsonSchemaBuilder.Object(("rebuild_first", JsonSchemaBuilder.Boolean("Rebuild before checking errors", true))), HandleCheckErrors),
+        new McpToolDefinition("set_view", "Set a named model view and zoom to fit", JsonSchemaBuilder.ObjectWithRequired(["view"], ("view", JsonSchemaBuilder.Enum(["front", "back", "left", "right", "top", "bottom", "isometric", "trimetric", "dimetric"]))), HandleSetView),
         new McpToolDefinition("check_interference", "Check for interference between components in an assembly", JsonSchemaBuilder.Object(("treatCoincidenceAsInterference", JsonSchemaBuilder.Boolean(defaultValue: false)), ("treatSubAssembliesAsComponents", JsonSchemaBuilder.Boolean(defaultValue: false)), ("includeMultibodyParts", JsonSchemaBuilder.Boolean(defaultValue: true))), HandleCheckInterference),
         new McpToolDefinition("measure_distance", "Measure distance between two selected entities", JsonSchemaBuilder.ObjectWithRequired(["entity1", "entity2"], ("entity1", JsonSchemaBuilder.String()), ("entity2", JsonSchemaBuilder.String())), HandleMeasureDistance),
         new McpToolDefinition("analyze_draft", "Analyze draft angles for molding", JsonSchemaBuilder.ObjectWithRequired(["pullDirection"], ("pullDirection", JsonSchemaBuilder.Enum(["x", "y", "z", "-x", "-y", "-z"])), ("requiredAngle", JsonSchemaBuilder.Number("Required draft angle in degrees", 1))), HandleAnalyzeDraft),
         new McpToolDefinition("check_geometry", "Check model geometry for errors", JsonSchemaBuilder.Object(("checkType", JsonSchemaBuilder.Enum(["all", "faces", "edges", "vertices"], "Geometry check type", "all"))), HandleCheckGeometry),
+        new McpToolDefinition("list_mates", "List mates in the active assembly", JsonSchemaBuilder.Object(), HandleListMates),
     ];
 
     private static ValueTask<object?> HandleGetMassProperties(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
@@ -49,6 +59,174 @@ public static class AnalysisTools
         catch (Exception ex)
         {
             return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to get mass properties: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleListBodies(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = arguments;
+        _ = cancellationToken;
+        try
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["bodies"] = api.ListBodies(),
+            }));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to list bodies: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleListFaces(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        try
+        {
+            var args = ToolHelpers.ToArguments(arguments);
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["faces"] = api.ListFaces(ToolHelpers.GetString(args, "surface_type"), args.ContainsKey("min_area_mm2") ? ToolHelpers.GetDouble(args, "min_area_mm2") : null),
+            }));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to list faces: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleListEdges(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        try
+        {
+            var args = ToolHelpers.ToArguments(arguments);
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["edges"] = api.ListEdges(
+                    ToolHelpers.GetString(args, "curve_type"),
+                    args.ContainsKey("min_length_mm") ? ToolHelpers.GetDouble(args, "min_length_mm") : null,
+                    args.ContainsKey("max_length_mm") ? ToolHelpers.GetDouble(args, "max_length_mm") : null),
+            }));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to list edges: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleListVertices(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = arguments;
+        _ = cancellationToken;
+        try
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["vertices"] = api.ListVertices(),
+            }));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to list vertices: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleListFeatures(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = arguments;
+        _ = cancellationToken;
+        try
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["features"] = api.ListFeatures(),
+            }));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to list features: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleGetBoundingBox(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = arguments;
+        _ = cancellationToken;
+        try
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(api.GetBoundingBox()));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to get bounding box: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleMeasure(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        try
+        {
+            var args = ToolHelpers.ToArguments(arguments);
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(api.MeasureSelection(ToolHelpers.GetSelection(args))));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to measure selection: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleCheckErrors(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        try
+        {
+            var args = ToolHelpers.ToArguments(arguments);
+            var result = api.GetRebuildStatus(ToolHelpers.GetBool(args, "rebuild_first", true));
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(result));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to check errors: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleSetView(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        try
+        {
+            var args = ToolHelpers.ToArguments(arguments);
+            var model = api.GetCurrentModel() ?? throw new InvalidOperationException("No model open");
+            var view = ToolHelpers.GetString(args, "view");
+            var mapped = view switch
+            {
+                "front" => 1,
+                "back" => 2,
+                "left" => 3,
+                "right" => 4,
+                "top" => 5,
+                "bottom" => 6,
+                "isometric" => 7,
+                "trimetric" => 8,
+                "dimetric" => 9,
+                _ => throw new InvalidOperationException($"Unsupported view: {view}"),
+            };
+
+            Invoke(model, "ShowNamedView2", string.Empty, mapped);
+            Invoke(model, "ViewZoomtofit2");
+            Invoke(model, "GraphicsRedraw2");
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["view"] = view,
+                ["message"] = $"Set view to {view}.",
+            }));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to set view: {ex.Message}"));
         }
     }
 
@@ -160,6 +338,23 @@ public static class AnalysisTools
         catch (Exception ex)
         {
             return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to measure distance: {ex.Message}"));
+        }
+    }
+
+    private static ValueTask<object?> HandleListMates(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = arguments;
+        _ = cancellationToken;
+        try
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["mates"] = api.ListMates(),
+            }));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to list mates: {ex.Message}"));
         }
     }
 

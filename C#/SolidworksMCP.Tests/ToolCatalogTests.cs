@@ -12,9 +12,25 @@ public sealed class ToolCatalogTests
         var names = tools.Select(tool => tool.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         Assert.IsTrue(names.Contains("open_model"));
+        Assert.IsTrue(names.Contains("get_active_document_info"));
+        Assert.IsTrue(names.Contains("save_document"));
+        Assert.IsTrue(names.Contains("save_active_document"));
         Assert.IsTrue(names.Contains("create_extrusion"));
         Assert.IsTrue(names.Contains("generate_vba_script"));
         Assert.IsTrue(names.Contains("get_mass_properties"));
+        Assert.IsTrue(names.Contains("create_assembly"));
+        Assert.IsTrue(names.Contains("list_components"));
+        Assert.IsTrue(names.Contains("insert_component"));
+        Assert.IsTrue(names.Contains("add_mate"));
+        Assert.IsTrue(names.Contains("set_component_fixed"));
+        Assert.IsTrue(names.Contains("list_reference_planes"));
+        Assert.IsTrue(names.Contains("list_sketches"));
+        Assert.IsTrue(names.Contains("list_sketch_segments"));
+        Assert.IsTrue(names.Contains("get_sketch_status"));
+        Assert.IsTrue(names.Contains("add_relation"));
+        Assert.IsTrue(names.Contains("add_dimension"));
+        Assert.IsTrue(names.Contains("list_dimensions"));
+        Assert.IsTrue(names.Contains("get_rebuild_status"));
     }
 
     [TestMethod]

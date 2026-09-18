@@ -69,3 +69,6 @@ EOF < /dev/null
 /C#/SolidworksMCP/obj
 /C#/SolidworksMCP.Tests/bin/Debug/net9.0
 /C#/SolidworksMCP.Tests/obj
+/C#/SolidworksChatClient.Tests/bin/Debug/net9.0-windows
+/C#/SolidworksChatClient.Tests/obj/Debug/net9.0-windows
+/C#/SolidworksChatClient.Tests/obj

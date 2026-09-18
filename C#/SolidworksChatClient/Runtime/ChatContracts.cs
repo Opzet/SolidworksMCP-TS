@@ -13,7 +13,9 @@ internal sealed record ToolExecution(
     bool Succeeded,
     string? FailureSummary,
     string? DiagnosticSummary,
-    string? RawResponse = null);
+    string? RawResponse = null,
+    string? FeedbackImagePath = null,
+    string? FeedbackMediaType = null);
 
 internal sealed record PlannedToolCall(string Name, string Arguments, string Source = "tool-call");
 
@@ -34,7 +36,9 @@ internal sealed record ChatTurnResult(
     IReadOnlyList<ToolExecution> ToolCalls,
     IReadOnlyList<string> ProgressUpdates,
     string FinalAssistantMessage,
-    ChatFailureDiagnostic? FailureDiagnostic = null);
+    ChatFailureDiagnostic? FailureDiagnostic = null,
+    string? FeedbackImagePath = null,
+    string? FeedbackMediaType = null);
 
 internal sealed record OllamaChatRequest(string Model, IReadOnlyList<OllamaMessage> Messages, JsonArray? Tools, bool Stream);
 
@@ -48,7 +52,13 @@ internal sealed record OllamaConnectionStatus(
 
 internal sealed record McpConnectionStatus(int ToolCount, IReadOnlyList<string> ToolNames);
 
-internal sealed record McpToolCallResult(string DisplayText, string RawJson, string? StderrSummary = null);
+internal sealed record McpToolCallResult(
+    string DisplayText,
+    string RawJson,
+    string? StderrSummary = null,
+    JsonObject? StructuredData = null,
+    string? FeedbackImagePath = null,
+    string? FeedbackMediaType = null);
 
 internal sealed record SolidWorksWarmupStatus(bool Attempted, bool Succeeded, string Message);
 

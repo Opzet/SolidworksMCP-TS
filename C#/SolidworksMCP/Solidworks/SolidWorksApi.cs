@@ -11,9 +11,20 @@ public sealed class SolidWorksApi
 {
     private const int SwRestore = 9;
 
+    private readonly string? outputRoot;
     private object? swApp;
     private object? currentModel;
     private string? lastDrawingSourceModelPath;
+
+    public SolidWorksApi()
+        : this(null)
+    {
+    }
+
+    public SolidWorksApi(string? outputRoot)
+    {
+        this.outputRoot = NormalizeOutputRoot(outputRoot);
+    }
 
     [DllImport("oleaut32.dll")]
     private static extern int GetActiveObject(ref Guid rclsid, IntPtr reserved, [MarshalAs(UnmanagedType.Interface)] out object? ppunk);
@@ -217,6 +228,1209 @@ public sealed class SolidWorksApi
             ["templates"] = templateItems,
             ["defaults"] = defaults,
             ["inspectedLocations"] = inspectedLocations.Distinct(StringComparer.OrdinalIgnoreCase).Cast<object?>().ToList(),
+        };
+    }
+
+    public SolidWorksModel CreateAssembly()
+    {
+        EnsureConnected();
+
+        List<string> inspectedLocations = [];
+        string? templatePathUsed = null;
+        var templateSource = "solidworks-newassembly-default";
+
+        currentModel = Invoke(swApp!, "NewAssembly");
+        if (currentModel is not null)
+        {
+            templatePathUsed = "<SolidWorks NewAssembly()>";
+        }
+
+        if (currentModel is null)
+        {
+            var templateCandidates = DiscoverTemplateCandidates(swApp!, inspectedLocations, "SOLIDWORKS_ASSEMBLY_TEMPLATE", TryGetAssemblyDocumentTemplate, [16, 17], ".asmdot");
+            foreach (var templatePath in templateCandidates)
+            {
+                var expandedTemplatePath = Environment.ExpandEnvironmentVariables(templatePath);
+                if (string.IsNullOrWhiteSpace(expandedTemplatePath))
+                {
+                    continue;
+                }
+
+                var (created, error) = TryCreateDocumentFromTemplate(swApp!, expandedTemplatePath);
+                if (created is not null)
+                {
+                    currentModel = created;
+                    templatePathUsed = expandedTemplatePath;
+                    templateSource = "template-resolution";
+                    break;
+                }
+
+                var existsState = File.Exists(expandedTemplatePath) ? "exists" : "missing";
+                var errorSuffix = string.IsNullOrWhiteSpace(error) ? string.Empty : $" (error: {error})";
+                inspectedLocations.Add($"<template failed to open ({existsState})> {expandedTemplatePath}{errorSuffix}");
+            }
+        }
+
+        if (currentModel is null)
+        {
+            var inspectedText = inspectedLocations.Count == 0
+                ? "(no assembly template paths were discovered)"
+                : string.Join("; ", inspectedLocations);
+
+            throw new InvalidOperationException($"Failed to create new assembly - no template available. Configure SOLIDWORKS_ASSEMBLY_TEMPLATE to a valid .asmdot file. Inspected: {inspectedText}");
+        }
+
+        lastDrawingSourceModelPath = null;
+
+        return new SolidWorksModel
+        {
+            Path = string.Empty,
+            Name = Convert.ToString(GetMethodValue(currentModel, "GetTitle")) ?? "Assembly",
+            Type = "Assembly",
+            IsActive = true,
+            TemplatePath = templatePathUsed,
+            TemplateSource = templateSource,
+        };
+    }
+
+    public IReadOnlyList<EntityDescriptor> ListReferencePlanes()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        return EnumerateRecentFeatures(currentModel)
+            .Where(IsPlaneFeature)
+            .Select((feature, index) => new EntityDescriptor
+            {
+                Index = index,
+                Kind = "plane",
+                Name = GetFeatureName(feature) ?? $"Plane{index}",
+                Type = Convert.ToString(GetMethodValue(feature, "GetTypeName2")),
+                Handle = BuildEntityHandle("plane", GetFeatureName(feature) ?? $"Plane{index}")
+            })
+            .ToList();
+    }
+
+    public IReadOnlyList<EntityDescriptor> ListReferenceAxes()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        return EnumerateRecentFeatures(currentModel)
+            .Where(IsAxisFeature)
+            .Select((feature, index) => new EntityDescriptor
+            {
+                Index = index,
+                Kind = "axis",
+                Name = GetFeatureName(feature) ?? $"Axis{index}",
+                Type = Convert.ToString(GetMethodValue(feature, "GetTypeName2")),
+                Handle = BuildEntityHandle("axis", GetFeatureName(feature) ?? $"Axis{index}")
+            })
+            .ToList();
+    }
+
+    public Dictionary<string, object?> CreatePlane(string mode, SelectionSpec selection, double? distanceMm, double? angleDeg, bool flip, string? name)
+    {
+        EnsureCurrentModel();
+        ArgumentException.ThrowIfNullOrWhiteSpace(mode);
+        ArgumentNullException.ThrowIfNull(selection);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (!IsPartDocument(currentModel))
+        {
+            throw new InvalidOperationException("Current document must be a part.");
+        }
+
+        _ = ExitSketch(false);
+        var existingFeatures = CaptureRecentFeatureSignatures(currentModel);
+        var references = ApplySelection(selection);
+        var featureManager = InvokeProperty(currentModel, "FeatureManager") ?? throw new InvalidOperationException("FeatureManager unavailable.");
+        var modeKey = mode.Trim().ToLowerInvariant();
+        const int planeDistance = 8;
+        const int planeAngle = 16;
+        const int planeCoincident = 1;
+        const int planeFlip = 256;
+        const int planeMidplane = 4096;
+        const int planeParallel = 4;
+        var flipFlag = flip ? planeFlip : 0;
+
+        var feature = modeKey switch
+        {
+            "offset" when distanceMm.HasValue => TryInvoke(featureManager, "InsertRefPlane", planeDistance | flipFlag, distanceMm.Value / 1000d, 0, 0d, 0, 0d),
+            "angle" when angleDeg.HasValue => TryInvoke(featureManager, "InsertRefPlane", planeAngle | flipFlag, angleDeg.Value * Math.PI / 180d, planeCoincident, 0d, 0, 0d),
+            "midplane" => TryInvoke(featureManager, "InsertRefPlane", planeMidplane, 0d, planeMidplane, 0d, 0, 0d),
+            "three_points" => TryInvoke(featureManager, "InsertRefPlane", planeCoincident, 0d, planeCoincident, 0d, planeCoincident, 0d),
+            "parallel_through_point" => TryInvoke(featureManager, "InsertRefPlane", planeParallel, 0d, planeCoincident, 0d, 0, 0d),
+            _ => throw new InvalidOperationException($"Unsupported plane mode or missing inputs: {mode}"),
+        };
+
+        TryClearSelection();
+        var resolvedFeature = ResolveCreatedFeature(currentModel, feature, existingFeatures);
+        if (!string.IsNullOrWhiteSpace(name) && resolvedFeature is not null)
+        {
+            TryRenameFeature(resolvedFeature, name);
+        }
+
+        var featureName = GetFeatureName(resolvedFeature) ?? name ?? string.Empty;
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = resolvedFeature is not null,
+            ["feature"] = featureName,
+            ["references"] = references,
+            ["planes"] = ListReferencePlanes(),
+            ["message"] = resolvedFeature is not null ? $"Created {modeKey} reference plane." : "SOLIDWORKS did not create a reference plane.",
+        };
+    }
+
+    public Dictionary<string, object?> CreateAxis(SelectionSpec selection, string? name)
+    {
+        EnsureCurrentModel();
+        ArgumentNullException.ThrowIfNull(selection);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (!IsPartDocument(currentModel))
+        {
+            throw new InvalidOperationException("Current document must be a part.");
+        }
+
+        _ = ExitSketch(false);
+        var existingFeatures = CaptureRecentFeatureSignatures(currentModel);
+        var references = ApplySelection(selection);
+        var created = TryInvoke(currentModel, "InsertAxis2", true);
+        TryClearSelection();
+        var resolvedFeature = ResolveCreatedFeature(currentModel, created, existingFeatures);
+        if (!string.IsNullOrWhiteSpace(name) && resolvedFeature is not null)
+        {
+            TryRenameFeature(resolvedFeature, name);
+        }
+
+        var featureName = GetFeatureName(resolvedFeature) ?? name ?? string.Empty;
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = resolvedFeature is not null,
+            ["feature"] = featureName,
+            ["references"] = references,
+            ["axes"] = ListReferenceAxes(),
+            ["message"] = resolvedFeature is not null ? $"Created reference axis '{featureName}'." : "SOLIDWORKS could not build an axis from that selection.",
+        };
+    }
+
+    public IReadOnlyList<EntityDescriptor> ListSketches()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        return EnumerateRecentFeatures(currentModel)
+            .Where(IsSketchFeature)
+            .Select((feature, index) => new EntityDescriptor
+            {
+                Index = index,
+                Kind = "sketch",
+                Name = GetFeatureName(feature) ?? $"Sketch{index}",
+                Type = Convert.ToString(GetMethodValue(feature, "GetTypeName2")),
+                Handle = BuildEntityHandle("sketch", GetFeatureName(feature) ?? $"Sketch{index}")
+            })
+            .ToList();
+    }
+
+    public IReadOnlyList<EntityDescriptor> ListSketchSegments(string? sketchName = null)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var sketch = ResolveSketch(sketchName) ?? throw new InvalidOperationException($"Sketch not found: {sketchName ?? "<active>"}");
+        var specificSketch = TryInvoke(sketch, "GetSpecificFeature2") ?? sketch;
+        var segments = AsEnumerable(TryInvoke(specificSketch, "GetSketchSegments") ?? TryInvoke(specificSketch, "GetSketchSegments2"));
+        return segments
+            .Select((segment, index) => new EntityDescriptor
+            {
+                Index = index,
+                Kind = "sketch_segment",
+                Name = Convert.ToString(GetMethodValue(segment, "GetNameForSelection")) ?? $"Segment{index}",
+                Type = Convert.ToString(GetMethodValue(segment, "GetType")) ?? Convert.ToString(GetMethodValue(segment, "GetTypeName2")),
+                Handle = BuildEntityHandle("sketch_segment", $"{GetFeatureName(sketch) ?? sketchName ?? "Sketch"}:{index}")
+            })
+            .ToList();
+    }
+
+    public IReadOnlyList<SolidWorksDimension> ListDimensions(string? ownerName = null)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var dimensions = new List<SolidWorksDimension>();
+        foreach (var feature in EnumerateRecentFeatures(currentModel))
+        {
+            var featureName = GetFeatureName(feature);
+            if (!string.IsNullOrWhiteSpace(ownerName) && !string.Equals(featureName, ownerName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var dimension = TryInvoke(feature, "GetFirstDisplayDimension") ?? TryInvoke(feature, "GetFirstDimension");
+            var safety = 0;
+            while (dimension is not null && safety++ < 100)
+            {
+                var dimensionObject = TryInvoke(dimension, "GetDimension2", 0) ?? TryInvoke(dimension, "GetDimension");
+                var name = GetString(dimensionObject, "FullName") ?? GetString(dimensionObject, "Name") ?? GetString(dimension, "GetNameForSelection");
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    var value = GetNumberFromObject(dimensionObject ?? dimension, "SystemValue", double.NaN);
+                    if (double.IsNaN(value))
+                    {
+                        value = GetNumberFromObject(dimensionObject ?? dimension, "Value", 0d);
+                    }
+
+                    dimensions.Add(new SolidWorksDimension
+                    {
+                        Name = name,
+                        Value = value * 1000d,
+                        Units = "mm",
+                    });
+                }
+
+                dimension = TryInvoke(dimension, "GetNext3") ?? TryInvoke(dimension, "GetNext");
+            }
+        }
+
+        return dimensions;
+    }
+
+    public IReadOnlyList<Dictionary<string, object?>> ListBodies()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var bodies = GetModelBodies(currentModel);
+        return bodies.Select((body, index) =>
+        {
+            var box = TryGetBodyBox(body);
+            var name = GetString(body, "Name") ?? $"body{index}";
+            var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["index"] = index,
+                ["name"] = name,
+                ["handle"] = BuildEntityHandle("body", name),
+            };
+
+            if (box.Length >= 6)
+            {
+                result["minMm"] = CreatePointDictionary(box[0] * 1000d, box[1] * 1000d, box[2] * 1000d);
+                result["maxMm"] = CreatePointDictionary(box[3] * 1000d, box[4] * 1000d, box[5] * 1000d);
+            }
+
+            return result;
+        }).ToList();
+    }
+
+    public IReadOnlyList<Dictionary<string, object?>> ListFaces(string? surfaceType = null, double? minAreaMm2 = null)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var faces = new List<Dictionary<string, object?>>();
+        var index = 0;
+        foreach (var body in GetModelBodies(currentModel))
+        {
+            foreach (var face in AsEnumerable(TryInvoke(body, "GetFaces")))
+            {
+                var faceType = NormalizeSurfaceType(Convert.ToInt32(TryInvoke(TryInvoke(face, "GetSurface"), "Identity") ?? -1));
+                var areaMm2 = GetNumberFromMethod(face, "GetArea", 0d) * 1_000_000d;
+                if (!string.IsNullOrWhiteSpace(surfaceType) && !string.Equals(faceType, surfaceType, StringComparison.OrdinalIgnoreCase))
+                {
+                    index++;
+                    continue;
+                }
+
+                if (minAreaMm2.HasValue && areaMm2 < minAreaMm2.Value)
+                {
+                    index++;
+                    continue;
+                }
+
+                var point = GetFacePickPoint(face);
+                faces.Add(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["index"] = index,
+                    ["surfaceType"] = faceType,
+                    ["areaMm2"] = Math.Round(areaMm2, 6),
+                    ["pointMm"] = CreatePointDictionary(point.X * 1000d, point.Y * 1000d, point.Z * 1000d),
+                    ["handle"] = BuildEntityHandle("face", index.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                });
+                index++;
+            }
+        }
+
+        return faces;
+    }
+
+    public IReadOnlyList<Dictionary<string, object?>> ListEdges(string? curveType = null, double? minLengthMm = null, double? maxLengthMm = null)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var edges = new List<Dictionary<string, object?>>();
+        var index = 0;
+        foreach (var body in GetModelBodies(currentModel))
+        {
+            foreach (var edge in AsEnumerable(TryInvoke(body, "GetEdges")))
+            {
+                var resolvedCurveType = NormalizeCurveType(Convert.ToInt32(TryInvoke(TryInvoke(edge, "GetCurve"), "Identity") ?? -1));
+                var lengthMm = GetNumberFromMethod(edge, "GetLength", 0d) * 1000d;
+                if (!string.IsNullOrWhiteSpace(curveType) && !string.Equals(resolvedCurveType, curveType, StringComparison.OrdinalIgnoreCase))
+                {
+                    index++;
+                    continue;
+                }
+
+                if (minLengthMm.HasValue && lengthMm < minLengthMm.Value)
+                {
+                    index++;
+                    continue;
+                }
+
+                if (maxLengthMm.HasValue && lengthMm > maxLengthMm.Value)
+                {
+                    index++;
+                    continue;
+                }
+
+                edges.Add(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["index"] = index,
+                    ["curveType"] = resolvedCurveType,
+                    ["lengthMm"] = Math.Round(lengthMm, 6),
+                    ["handle"] = BuildEntityHandle("edge", index.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                });
+                index++;
+            }
+        }
+
+        return edges;
+    }
+
+    public IReadOnlyList<Dictionary<string, object?>> ListVertices()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var vertices = new List<Dictionary<string, object?>>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var index = 0;
+        foreach (var body in GetModelBodies(currentModel))
+        {
+            foreach (var edge in AsEnumerable(TryInvoke(body, "GetEdges")))
+            {
+                foreach (var member in new[] { "GetStartVertex", "GetEndVertex" })
+                {
+                    var vertex = TryInvoke(edge, member);
+                    var pointArray = vertex is null ? [] : GetArrayFromObject(vertex, "Point");
+                    if (pointArray.Length < 3)
+                    {
+                        continue;
+                    }
+
+                    var key = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Math.Round(pointArray[0], 9)}|{Math.Round(pointArray[1], 9)}|{Math.Round(pointArray[2], 9)}");
+                    if (!seen.Add(key))
+                    {
+                        continue;
+                    }
+
+                    vertices.Add(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["index"] = index,
+                        ["pointMm"] = CreatePointDictionary(pointArray[0] * 1000d, pointArray[1] * 1000d, pointArray[2] * 1000d),
+                        ["handle"] = BuildEntityHandle("vertex", index.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    });
+                    index++;
+                }
+            }
+        }
+
+        return vertices;
+    }
+
+    public IReadOnlyList<Dictionary<string, object?>> ListFeatures()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        return EnumerateRecentFeatures(currentModel, 500)
+            .Select((feature, index) => new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["index"] = index,
+                ["name"] = GetFeatureName(feature) ?? $"Feature{index}",
+                ["type"] = Convert.ToString(GetMethodValue(feature, "GetTypeName2")) ?? string.Empty,
+                ["suppressed"] = Convert.ToBoolean(TryInvoke(feature, "IsSuppressed2", 0, null) ?? TryInvoke(feature, "IsSuppressed") ?? false),
+                ["handle"] = BuildEntityHandle("feature", GetFeatureName(feature) ?? $"Feature{index}"),
+            })
+            .ToList();
+    }
+
+    public Dictionary<string, object?> GetBoundingBox()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var box = GetSolidWorksDocumentType(currentModel) == 1
+            ? GetArrayFromMethod(currentModel, "GetPartBox", true)
+            : GetArrayFromMethod(currentModel, "GetBox", 0);
+        if (box.Length < 6)
+        {
+            throw new InvalidOperationException("The active document has no geometry to bound.");
+        }
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["minMm"] = CreatePointDictionary(box[0] * 1000d, box[1] * 1000d, box[2] * 1000d),
+            ["maxMm"] = CreatePointDictionary(box[3] * 1000d, box[4] * 1000d, box[5] * 1000d),
+            ["sizeMm"] = new[]
+            {
+                Math.Round((box[3] - box[0]) * 1000d, 6),
+                Math.Round((box[4] - box[1]) * 1000d, 6),
+                Math.Round((box[5] - box[2]) * 1000d, 6),
+            },
+        };
+    }
+
+    public Dictionary<string, object?> MeasureSelection(SelectionSpec selection)
+    {
+        EnsureCurrentModel();
+        ArgumentNullException.ThrowIfNull(selection);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var count = ApplySelection(selection);
+        if (count == 0)
+        {
+            throw new InvalidOperationException("The selection specification did not resolve to anything to measure.");
+        }
+
+        var extension = GetProperty(currentModel, "Extension") ?? throw new InvalidOperationException("Model extension is unavailable.");
+        var measure = GetProperty(extension, "CreateMeasure") ?? TryInvoke(extension, "CreateMeasure") ?? throw new InvalidOperationException("SOLIDWORKS did not provide a measure object.");
+        _ = TrySetProperty(measure, "ArcOption", 0);
+        var calculated = GetProperty(measure, "Calculate") ?? TryInvoke(measure, "Calculate");
+        if (calculated is not bool succeeded || !succeeded)
+        {
+            TryClearSelection();
+            throw new InvalidOperationException("SOLIDWORKS could not measure that selection.");
+        }
+
+        try
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["entities"] = count,
+                ["lengthMm"] = ReadMeasureValue(measure, "Length", 1000d),
+                ["totalLengthMm"] = ReadMeasureValue(measure, "TotalLength", 1000d),
+                ["arcLengthMm"] = ReadMeasureValue(measure, "ArcLength", 1000d),
+                ["chordLengthMm"] = ReadMeasureValue(measure, "ChordLength", 1000d),
+                ["perimeterMm"] = ReadMeasureValue(measure, "Perimeter", 1000d),
+                ["areaMm2"] = ReadMeasureValue(measure, "Area", 1_000_000d),
+                ["totalAreaMm2"] = ReadMeasureValue(measure, "TotalArea", 1_000_000d),
+                ["distanceMm"] = ReadMeasureValue(measure, "Distance", 1000d),
+                ["normalDistanceMm"] = ReadMeasureValue(measure, "NormalDistance", 1000d),
+                ["centerDistanceMm"] = ReadMeasureValue(measure, "CenterDistance", 1000d),
+                ["deltaXmm"] = ReadMeasureValue(measure, "DeltaX", 1000d),
+                ["deltaYmm"] = ReadMeasureValue(measure, "DeltaY", 1000d),
+                ["deltaZmm"] = ReadMeasureValue(measure, "DeltaZ", 1000d),
+                ["angleDeg"] = ReadMeasureValue(measure, "Angle", 180d / Math.PI),
+                ["diameterMm"] = ReadMeasureValue(measure, "Diameter", 1000d),
+                ["radiusMm"] = ReadMeasureValue(measure, "Radius", 1000d),
+            }.Where(pair => pair.Value is not null).ToDictionary();
+        }
+        finally
+        {
+            TryClearSelection();
+        }
+    }
+
+    public IReadOnlyList<Dictionary<string, object?>> ListMates()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (!IsAssemblyDocument(currentModel))
+        {
+            throw new InvalidOperationException("Current document must be an assembly.");
+        }
+
+        var mateTypeNames = new Dictionary<int, string>
+        {
+            [0] = "coincident",
+            [1] = "concentric",
+            [3] = "parallel",
+            [4] = "perpendicular",
+            [5] = "distance",
+            [6] = "angle",
+            [8] = "tangent",
+            [12] = "lock",
+        };
+
+        var mates = new List<Dictionary<string, object?>>();
+        foreach (var feature in EnumerateRecentFeatures(currentModel, 500))
+        {
+            if (!string.Equals(Convert.ToString(GetMethodValue(feature, "GetTypeName2")), "MateGroup", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var child = TryInvoke(feature, "GetFirstSubFeature");
+            while (child is not null)
+            {
+                var definition = TryInvoke(child, "GetSpecificFeature2");
+                var typeCode = Convert.ToInt32(GetProperty(definition, "Type") ?? -1);
+                var distance = GetNumberFromObject(definition, "Distance", double.NaN);
+                var angle = GetNumberFromObject(definition, "Angle", double.NaN);
+                mates.Add(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["name"] = GetFeatureName(child) ?? GetString(child, "Name") ?? string.Empty,
+                    ["mateType"] = mateTypeNames.TryGetValue(typeCode, out var mateTypeName) ? mateTypeName : $"type_{typeCode}",
+                    ["distanceMm"] = double.IsNaN(distance) ? null : Math.Round(distance * 1000d, 6),
+                    ["angleDeg"] = double.IsNaN(angle) ? null : Math.Round(angle * 180d / Math.PI, 6),
+                });
+                child = TryInvoke(child, "GetNextSubFeature");
+            }
+        }
+
+        return mates;
+    }
+
+    public string GetSketchStatus(string? sketchName = null)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var sketch = ResolveSketch(sketchName);
+        if (sketch is null)
+        {
+            return "closed";
+        }
+
+        var specificSketch = TryInvoke(sketch, "GetSpecificFeature2") ?? sketch;
+        var statusCode = Convert.ToInt32(GetMethodValue(specificSketch, "GetConstrainedStatus") ?? GetMethodValue(sketch, "GetConstrainedStatus") ?? 0);
+        return statusCode switch
+        {
+            1 => "unknown",
+            2 => "under_defined",
+            3 => "fully_defined",
+            4 => "over_defined",
+            5 => "no_solution",
+            6 => "invalid_solution",
+            7 => "autosolve_off",
+            _ => statusCode == 0 ? "closed" : $"status_{statusCode}",
+        };
+    }
+
+    public Dictionary<string, object?> AddSketchRelation(string relation, SelectionSpec selection)
+    {
+        EnsureCurrentModel();
+        ArgumentException.ThrowIfNullOrWhiteSpace(relation);
+        ArgumentNullException.ThrowIfNull(selection);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var sketch = GetActiveSketch(currentModel) ?? throw new InvalidOperationException("No sketch is open. Create or edit a sketch first.");
+        var specificSketch = TryInvoke(sketch, "GetSpecificFeature2") ?? sketch;
+        var relationManager = GetProperty(specificSketch, "RelationManager") ?? GetProperty(sketch, "RelationManager") ?? TryInvoke(specificSketch, "RelationManager") ?? TryInvoke(sketch, "RelationManager");
+        if (relationManager is null)
+        {
+            throw new InvalidOperationException("Sketch relation manager is unavailable.");
+        }
+
+        var relationCode = relation.Trim().ToLowerInvariant() switch
+        {
+            "horizontal" => 4,
+            "vertical" => 5,
+            "tangent" => 6,
+            "parallel" => 7,
+            "perpendicular" => 8,
+            "coincident" => 9,
+            "concentric" => 10,
+            "symmetric" => 11,
+            "midpoint" => 12,
+            "intersection" => 13,
+            "equal" => 14,
+            "fixed" => 17,
+            "collinear" => 27,
+            "coradial" => 28,
+            _ => throw new ArgumentException($"Unsupported relation: {relation}", nameof(relation)),
+        };
+
+        var entities = ResolveSketchRelationEntities(selection).ToArray();
+        if (entities.Length == 0)
+        {
+            throw new InvalidOperationException("Relation selection must include sketch_segments or sketch_points.");
+        }
+
+        var beforeCount = Convert.ToInt32(TryInvoke(relationManager, "GetRelationsCount", 0) ?? 0);
+        try
+        {
+            TryInvoke(relationManager, "AddRelation", entities, relationCode);
+        }
+        finally
+        {
+            TryClearSelection();
+        }
+
+        var afterCount = Convert.ToInt32(TryInvoke(relationManager, "GetRelationsCount", 0) ?? beforeCount);
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = afterCount > beforeCount,
+            ["relation"] = relation,
+            ["entities"] = entities.Length,
+            ["relationsAdded"] = Math.Max(afterCount - beforeCount, 0),
+            ["sketchStatus"] = GetSketchStatus(selection.SketchName),
+            ["message"] = afterCount > beforeCount
+                ? $"Added {relation} relation across {entities.Length} sketch entities."
+                : $"SOLIDWORKS did not add a {relation} relation to that sketch selection.",
+        };
+    }
+
+    public Dictionary<string, object?> AddSketchDimension(SelectionSpec selection, double? valueMm, double? valueDeg, string kind, double placeXmm, double placeYmm, double placeZmm)
+    {
+        EnsureCurrentModel();
+        ArgumentNullException.ThrowIfNull(selection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(kind);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var sketchManager = InvokeProperty(currentModel, "SketchManager") ?? throw new InvalidOperationException("SketchManager unavailable");
+        _ = GetActiveSketch(currentModel) ?? throw new InvalidOperationException("No sketch is open. Create or edit a sketch first.");
+        var entities = ResolveSketchRelationEntities(selection).ToArray();
+        if (entities.Length == 0)
+        {
+            throw new InvalidOperationException("Dimension selection must include sketch_segments or sketch_points.");
+        }
+
+        var selected = 0;
+        foreach (var entity in entities)
+        {
+            var appended = selected > 0;
+            if (!TrySelectEntity(entity, appended))
+            {
+                throw new InvalidOperationException("Failed to select one or more sketch entities for dimensioning.");
+            }
+
+            selected++;
+        }
+
+        var methodName = kind.Trim().ToLowerInvariant() switch
+        {
+            "auto" => "AddDimension2",
+            "horizontal" => "AddHorizontalDimension2",
+            "vertical" => "AddVerticalDimension2",
+            "radius" => "AddRadialDimension2",
+            "diameter" => "AddDiameterDimension2",
+            _ => throw new ArgumentException($"Unsupported dimension kind: {kind}", nameof(kind)),
+        };
+
+        object? created;
+        try
+        {
+            created = TryInvoke(sketchManager, methodName, placeXmm / 1000d, placeYmm / 1000d, placeZmm / 1000d);
+        }
+        finally
+        {
+            TryClearSelection();
+        }
+
+        if (created is null)
+        {
+            throw new InvalidOperationException($"SOLIDWORKS did not create a {kind} dimension for that sketch selection.");
+        }
+
+        var dimension = TryInvoke(created, "GetDimension2", 0) ?? TryInvoke(created, "GetDimension") ?? created;
+        if (valueMm.HasValue)
+        {
+            SetDimensionValueCore(dimension, valueMm.Value / 1000d);
+        }
+        else if (valueDeg.HasValue)
+        {
+            SetDimensionValueCore(dimension, valueDeg.Value * Math.PI / 180d);
+        }
+
+        TryInvoke(currentModel, "EditRebuild3");
+        var name = GetString(dimension, "FullName") ?? GetString(dimension, "Name") ?? GetString(created, "GetNameForSelection") ?? "<unnamed>";
+        var rawValue = GetNumberFromObject(dimension, "SystemValue", double.NaN);
+        var reportedUnits = valueDeg.HasValue && !valueMm.HasValue ? "deg" : "mm";
+        var reportedValue = valueDeg.HasValue && !valueMm.HasValue
+            ? (double.IsNaN(rawValue) ? valueDeg.Value : rawValue * 180d / Math.PI)
+            : (double.IsNaN(rawValue) ? (valueMm ?? 0d) : rawValue * 1000d);
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["name"] = name,
+            ["kind"] = kind,
+            ["value"] = reportedValue,
+            ["units"] = reportedUnits,
+            ["sketchStatus"] = GetSketchStatus(selection.SketchName),
+            ["message"] = $"Created sketch dimension {name}.",
+        };
+    }
+
+    public IReadOnlyList<Dictionary<string, object?>> ListComponents(bool topLevelOnly)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (!IsAssemblyDocument(currentModel))
+        {
+            throw new InvalidOperationException("Current document must be an assembly.");
+        }
+
+        var rawComponents = topLevelOnly
+            ? TryInvoke(currentModel, "GetComponents", false)
+            : TryInvoke(currentModel, "GetComponents", true);
+        var components = AsEnumerable(rawComponents);
+
+        return components.Select((component, index) =>
+        {
+            var name = GetString(component, "Name2") ?? $"Component{index}";
+            var transform = TryInvoke(component, "Transform2") ?? TryInvoke(component, "GetTotalTransform");
+            var origin = ExtractTransformOrigin(transform);
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["index"] = index,
+                ["name"] = name,
+                ["path"] = GetString(component, "GetPathName") ?? string.Empty,
+                ["suppressed"] = Convert.ToBoolean(TryInvoke(component, "IsSuppressed") ?? false),
+                ["fixed"] = Convert.ToBoolean(TryInvoke(component, "IsFixed") ?? false),
+                ["originMm"] = origin,
+                ["handle"] = BuildEntityHandle("component", name),
+            };
+        }).ToList();
+    }
+
+    public Dictionary<string, object?> InsertComponent(string path, double xMm, double yMm, double zMm, string? configuration)
+    {
+        EnsureCurrentModel();
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (!IsAssemblyDocument(currentModel))
+        {
+            throw new InvalidOperationException("Current document must be an assembly.");
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException($"No such file: {fullPath}", fullPath);
+        }
+
+        var docType = GetDocumentType(fullPath);
+        if (docType is not (1 or 2))
+        {
+            throw new InvalidOperationException("Only part and assembly files can be inserted as components.");
+        }
+
+        _ = TryInvoke(swApp!, "OpenDoc6", fullPath, docType, 1, configuration ?? string.Empty, 0, 0);
+        var component = TryInvoke(currentModel, "AddComponent5", fullPath, 0, string.Empty, false, configuration ?? string.Empty, xMm / 1000d, yMm / 1000d, zMm / 1000d)
+            ?? TryInvoke(currentModel, "AddComponent", fullPath, xMm / 1000d, yMm / 1000d, zMm / 1000d);
+        if (component is null)
+        {
+            throw new InvalidOperationException($"SOLIDWORKS did not insert {Path.GetFileName(fullPath)} into the assembly.");
+        }
+
+        var rebuild = RebuildModel(false);
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["component"] = GetString(component, "Name2") ?? Path.GetFileNameWithoutExtension(fullPath),
+            ["path"] = fullPath,
+            ["rebuild"] = rebuild,
+            ["message"] = $"Inserted {Path.GetFileName(fullPath)}.",
+        };
+    }
+
+    public Dictionary<string, object?> SetComponentFixed(IReadOnlyList<string> componentNames, bool fixedState)
+    {
+        EnsureCurrentModel();
+        ArgumentNullException.ThrowIfNull(componentNames);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (!IsAssemblyDocument(currentModel))
+        {
+            throw new InvalidOperationException("Current document must be an assembly.");
+        }
+
+        if (componentNames.Count == 0)
+        {
+            throw new InvalidOperationException("At least one component name is required.");
+        }
+
+        TryClearSelection();
+        var selected = 0;
+        foreach (var componentName in componentNames)
+        {
+            var component = ResolveAssemblyComponent(componentName) ?? throw new InvalidOperationException($"Component not found: {componentName}");
+            if (!TrySelectEntity(component, selected > 0))
+            {
+                throw new InvalidOperationException($"Failed to select component: {componentName}");
+            }
+
+            selected++;
+        }
+
+        try
+        {
+            var actionResult = fixedState
+                ? TryInvoke(currentModel, "FixComponent")
+                : TryInvoke(currentModel, "UnfixComponent");
+            if (actionResult is bool succeeded && !succeeded)
+            {
+                throw new InvalidOperationException("SOLIDWORKS rejected the component fixed-state update.");
+            }
+        }
+        finally
+        {
+            TryClearSelection();
+        }
+
+        var rebuild = RebuildModel(false);
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["fixed"] = fixedState,
+            ["components"] = componentNames.Cast<object?>().ToList(),
+            ["rebuild"] = rebuild,
+            ["message"] = $"Set fixed={fixedState} on {componentNames.Count} component(s).",
+        };
+    }
+
+    public Dictionary<string, object?> AddMate(SelectionSpec selection, string mateType, string alignment, double distanceMm, double angleDeg, bool flip, bool lockRotation)
+    {
+        EnsureCurrentModel();
+        ArgumentNullException.ThrowIfNull(selection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(mateType);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (!IsAssemblyDocument(currentModel))
+        {
+            throw new InvalidOperationException("Current document must be an assembly.");
+        }
+
+        var mateTypeCode = mateType.Trim().ToLowerInvariant() switch
+        {
+            "coincident" => 0,
+            "concentric" => 1,
+            "distance" => 5,
+            "angle" => 6,
+            "parallel" => 3,
+            "perpendicular" => 4,
+            "tangent" => 8,
+            "lock" => 12,
+            _ => throw new ArgumentException($"Unsupported mate type: {mateType}", nameof(mateType)),
+        };
+
+        var alignmentCode = alignment.Trim().ToLowerInvariant() switch
+        {
+            "closest" => 0,
+            "aligned" => 1,
+            "anti_aligned" => 2,
+            _ => throw new ArgumentException($"Unsupported mate alignment: {alignment}", nameof(alignment)),
+        };
+
+        var selectedCount = ApplySelection(selection);
+        if (selectedCount < 2)
+        {
+            TryClearSelection();
+            throw new InvalidOperationException("Mate selection must resolve to at least two entities.");
+        }
+
+        object? mate;
+        var status = 0;
+        try
+        {
+            mate = TryInvoke(currentModel, "AddMate5", mateTypeCode, alignmentCode, flip, distanceMm / 1000d, distanceMm / 1000d, distanceMm / 1000d, 1.0d, 1.0d, angleDeg * Math.PI / 180d, angleDeg * Math.PI / 180d, angleDeg * Math.PI / 180d, false, lockRotation, 0, status)
+                ?? TryInvoke(currentModel, "AddMate3", mateTypeCode, alignmentCode, flip, distanceMm / 1000d, 0d, angleDeg * Math.PI / 180d);
+        }
+        finally
+        {
+            TryClearSelection();
+        }
+
+        var rebuild = RebuildModel(false);
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = mate is not null,
+            ["mate"] = GetString(mate, "Name") ?? GetString(mate, "Name2") ?? string.Empty,
+            ["mateType"] = mateType,
+            ["alignment"] = alignment,
+            ["selectedEntities"] = selectedCount,
+            ["status"] = status,
+            ["rebuild"] = rebuild,
+            ["message"] = mate is not null
+                ? $"Added a {mateType} mate."
+                : $"SOLIDWORKS refused the {mateType} mate.",
+        };
+    }
+
+    public Dictionary<string, object?> GetRebuildStatus(bool force)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var rebuild = RebuildModel(force);
+        var errors = Convert.ToInt32(Invoke(currentModel, "GetErrorCode2") ?? Invoke(currentModel, "GetLastError") ?? 0);
+        var warnings = Convert.ToInt32(Invoke(currentModel, "GetWarningCount") ?? 0);
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = errors == 0,
+            ["document"] = GetCurrentModelTitleOrPath(),
+            ["rebuild"] = rebuild,
+            ["errorCode"] = errors,
+            ["warningCount"] = warnings,
+            ["message"] = errors == 0 ? "Rebuilt the active document." : "The rebuild reported problems.",
+        };
+    }
+
+    public Dictionary<string, object?> EditSketch(string sketchName)
+    {
+        EnsureCurrentModel();
+        ArgumentException.ThrowIfNullOrWhiteSpace(sketchName);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var sketch = ResolveSketch(sketchName) ?? throw new InvalidOperationException($"Sketch not found: {sketchName}");
+        TryClearSelection();
+        if (!TrySelectSketchForExtrusion(currentModel, sketch))
+        {
+            throw new InvalidOperationException($"Could not select sketch '{sketchName}'.");
+        }
+
+        var sketchManager = InvokeProperty(currentModel, "SketchManager") ?? throw new InvalidOperationException("SketchManager unavailable");
+        _ = TryInvoke(sketchManager, "InsertSketch", true);
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["sketch"] = GetFeatureName(sketch) ?? sketchName,
+            ["message"] = $"Reopened sketch '{sketchName}' for editing.",
+        };
+    }
+
+    public Dictionary<string, object?> CloseSketch()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var sketchManager = InvokeProperty(currentModel, "SketchManager") ?? throw new InvalidOperationException("SketchManager unavailable");
+        var activeSketch = GetProperty(sketchManager, "ActiveSketch") ?? TryInvoke(sketchManager, "GetActiveSketch2");
+        if (activeSketch is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["message"] = "No sketch is open.",
+            };
+        }
+
+        var sketchName = GetFeatureName(activeSketch) ?? GetString(activeSketch, "Name") ?? string.Empty;
+        _ = TryInvoke(sketchManager, "InsertSketch", true);
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["sketch"] = sketchName,
+            ["message"] = "Closed the open sketch.",
+        };
+    }
+
+    public Dictionary<string, object?> AddCenterLine(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        var x1 = GetNumber(parameters, "x1", 0);
+        var y1 = GetNumber(parameters, "y1", 0);
+        var z1 = GetNumber(parameters, "z1", 0);
+        var x2 = GetNumber(parameters, "x2", 100);
+        var y2 = GetNumber(parameters, "y2", 0);
+        var z2 = GetNumber(parameters, "z2", 0);
+        var sketchManager = InvokeProperty(currentModel!, "SketchManager") ?? throw new InvalidOperationException("SketchManager unavailable");
+        var segment = TryInvoke(sketchManager, "CreateCenterLine", x1 / 1000d, y1 / 1000d, z1 / 1000d, x2 / 1000d, y2 / 1000d, z2 / 1000d);
+        return segment is null
+            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = false, ["error"] = "Failed to create centerline" }
+            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = true, ["centerLineId"] = $"centerline_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" };
+    }
+
+    public Dictionary<string, object?> AddPoint(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        var x = GetNumber(parameters, "x", 0) / 1000d;
+        var y = GetNumber(parameters, "y", 0) / 1000d;
+        var z = GetNumber(parameters, "z", 0) / 1000d;
+        var sketchManager = InvokeProperty(currentModel!, "SketchManager") ?? throw new InvalidOperationException("SketchManager unavailable");
+        var point = TryInvoke(sketchManager, "CreatePoint", x, y, z);
+        return point is null
+            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = false, ["error"] = "Failed to create point" }
+            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = true, ["pointId"] = $"point_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" };
+    }
+
+    public Dictionary<string, object?> AddArc(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        var sketchManager = InvokeProperty(currentModel!, "SketchManager") ?? throw new InvalidOperationException("SketchManager unavailable");
+        var created = TryInvoke(
+            sketchManager,
+            "CreateArc",
+            GetNumber(parameters, "centerX", 0) / 1000d,
+            GetNumber(parameters, "centerY", 0) / 1000d,
+            GetNumber(parameters, "centerZ", 0) / 1000d,
+            GetNumber(parameters, "startX", 0) / 1000d,
+            GetNumber(parameters, "startY", 0) / 1000d,
+            GetNumber(parameters, "startZ", 0) / 1000d,
+            GetNumber(parameters, "endX", 0) / 1000d,
+            GetNumber(parameters, "endY", 0) / 1000d,
+            GetNumber(parameters, "endZ", 0) / 1000d,
+            GetBool(parameters, "clockwise", false));
+        return created is null
+            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = false, ["error"] = "Failed to create arc" }
+            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = true, ["arcId"] = $"arc_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" };
+    }
+
+    public Dictionary<string, object?> Add3PointArc(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        var sketchManager = InvokeProperty(currentModel!, "SketchManager") ?? throw new InvalidOperationException("SketchManager unavailable");
+        var created = TryInvoke(
+            sketchManager,
+            "Create3PointArc",
+            GetNumber(parameters, "x1", 0) / 1000d,
+            GetNumber(parameters, "y1", 0) / 1000d,
+            GetNumber(parameters, "z1", 0) / 1000d,
+            GetNumber(parameters, "x2", 0) / 1000d,
+            GetNumber(parameters, "y2", 0) / 1000d,
+            GetNumber(parameters, "z2", 0) / 1000d,
+            GetNumber(parameters, "x3", 0) / 1000d,
+            GetNumber(parameters, "y3", 0) / 1000d,
+            GetNumber(parameters, "z3", 0) / 1000d);
+        return created is null
+            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = false, ["error"] = "Failed to create 3-point arc" }
+            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = true, ["arcId"] = $"arc3_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" };
+    }
+
+    public Dictionary<string, object?> AddEllipse(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        var sketchManager = InvokeProperty(currentModel!, "SketchManager") ?? throw new InvalidOperationException("SketchManager unavailable");
+        var created = TryInvoke(
+            sketchManager,
+            "CreateEllipse",
+            GetNumber(parameters, "centerX", 0) / 1000d,
+            GetNumber(parameters, "centerY", 0) / 1000d,
+            0d,
+            GetNumber(parameters, "majorX", 10) / 1000d,
+            GetNumber(parameters, "majorY", 0) / 1000d,
+            0d,
+            GetNumber(parameters, "minorX", 0) / 1000d,
+            GetNumber(parameters, "minorY", 5) / 1000d,
+            0d);
+        return created is null
+            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = false, ["error"] = "Failed to create ellipse" }
+            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = true, ["ellipseId"] = $"ellipse_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" };
+    }
+
+    public Dictionary<string, object?> SetConstructionGeometry(string? sketchName, IReadOnlyList<int> segmentIndices, bool construction)
+    {
+        EnsureCurrentModel();
+        ArgumentNullException.ThrowIfNull(segmentIndices);
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var sketch = ResolveSketch(sketchName) ?? throw new InvalidOperationException($"Sketch not found: {sketchName ?? "<active>"}");
+        var specificSketch = TryInvoke(sketch, "GetSpecificFeature2") ?? sketch;
+        var segments = AsEnumerable(TryInvoke(specificSketch, "GetSketchSegments") ?? TryInvoke(specificSketch, "GetSketchSegments2"));
+        var changed = 0;
+        foreach (var index in segmentIndices)
+        {
+            if (index < 0 || index >= segments.Count)
+            {
+                throw new InvalidOperationException($"Sketch segment index {index} is out of range (0..{segments.Count - 1}).");
+            }
+
+            TrySetProperty(segments[index], "ConstructionGeometry", construction);
+            changed++;
+        }
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["changed"] = changed,
+            ["construction"] = construction,
+            ["message"] = $"Set construction={construction} on {changed} segments.",
         };
     }
 
@@ -775,6 +1989,36 @@ public sealed class SolidWorksApi
         return currentModel;
     }
 
+    public Dictionary<string, object?> GetActiveDocumentInfo()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["connected"] = IsConnected(),
+                ["hasActiveDocument"] = false,
+            };
+        }
+
+        var path = GetString(currentModel, "GetPathName") ?? string.Empty;
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["connected"] = IsConnected(),
+            ["hasActiveDocument"] = true,
+            ["title"] = GetString(currentModel, "GetTitle") ?? "Unknown",
+            ["path"] = path,
+            ["type"] = GetSolidWorksDocumentType(currentModel) switch
+            {
+                1 => "Part",
+                2 => "Assembly",
+                3 => "Drawing",
+                _ => "Unknown",
+            },
+            ["isSaved"] = !string.IsNullOrWhiteSpace(path),
+        };
+    }
+
     public string GetCurrentModelTitleOrPath()
     {
         EnsureCurrentModel();
@@ -785,6 +2029,66 @@ public sealed class SolidWorksApi
     {
         EnsureCurrentModel();
         return GetString(currentModel, "GetPathName");
+    }
+
+    public string SaveDocument(string filePath)
+    {
+        EnsureCurrentModel();
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        var normalizedPath = NormalizeManagedOutputPath(filePath);
+        EnsureParentDirectory(normalizedPath);
+
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        TryClearSelection();
+        if (!TrySaveDocument(currentModel, normalizedPath, 1))
+        {
+            throw new InvalidOperationException($"Failed to save document: {normalizedPath}");
+        }
+
+        if (GetSolidWorksDocumentType(currentModel) is 1 or 2)
+        {
+            lastDrawingSourceModelPath = normalizedPath;
+        }
+
+        return normalizedPath;
+    }
+
+    public string SaveActiveDocument()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        var currentPath = GetString(currentModel, "GetPathName");
+        if (string.IsNullOrWhiteSpace(currentPath))
+        {
+            throw new InvalidOperationException("The active document has no saved path; use save_document first.");
+        }
+
+        TryClearSelection();
+        var saved = TryInvoke(currentModel, "Save3", 1, 0, 0);
+        if (saved is not bool success || !success)
+        {
+            saved = TryInvoke(currentModel, "Save");
+        }
+
+        if (saved is not bool didSave || !didSave)
+        {
+            throw new InvalidOperationException($"Failed to save active document: {currentPath}");
+        }
+
+        if (GetSolidWorksDocumentType(currentModel) is 1 or 2)
+        {
+            lastDrawingSourceModelPath = currentPath;
+        }
+
+        return currentPath;
     }
 
     public object CreateDrawingFromCurrentModel(string? templatePath)
@@ -830,6 +2134,133 @@ public sealed class SolidWorksApi
             ["message"] = warnings.Count == 0
                 ? "Created new drawing from current model"
                 : $"Created new drawing from current model with warnings: {string.Join("; ", warnings)}",
+        };
+    }
+
+    public IReadOnlyList<Dictionary<string, object?>> ListDrawingViews()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null || GetSolidWorksDocumentType(currentModel) != 3)
+        {
+            throw new InvalidOperationException("Current document must be a drawing");
+        }
+
+        var views = new List<Dictionary<string, object?>>();
+        var currentView = TryInvoke(currentModel, "GetFirstView");
+        var index = 0;
+        while (currentView is not null && index < 500)
+        {
+            views.Add(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["index"] = index,
+                ["name"] = GetString(currentView, "Name") ?? GetString(currentView, "GetName2") ?? $"View{index}",
+                ["type"] = Convert.ToInt32(GetProperty(currentView, "Type") ?? 0),
+                ["scale"] = GetProperty(currentView, "ScaleDecimal"),
+            });
+            currentView = TryInvoke(currentView, "GetNextView");
+            index++;
+        }
+
+        return views;
+    }
+
+    public IReadOnlyList<string> ListSheets()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null || GetSolidWorksDocumentType(currentModel) != 3)
+        {
+            throw new InvalidOperationException("Current document must be a drawing");
+        }
+
+        return AsEnumerable(TryInvoke(currentModel, "GetSheetNames"))
+            .Select(item => Convert.ToString(item) ?? string.Empty)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .ToList();
+    }
+
+    public Dictionary<string, object?> ActivateSheet(string sheetName)
+    {
+        EnsureCurrentModel();
+        ArgumentException.ThrowIfNullOrWhiteSpace(sheetName);
+        if (currentModel is null || GetSolidWorksDocumentType(currentModel) != 3)
+        {
+            throw new InvalidOperationException("Current document must be a drawing");
+        }
+
+        var activated = TryInvoke(currentModel, "ActivateSheet", sheetName) is bool success && success;
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = activated,
+            ["sheet"] = sheetName,
+            ["message"] = activated ? $"Activated sheet '{sheetName}'." : $"Could not activate sheet '{sheetName}'.",
+        };
+    }
+
+    public Dictionary<string, object?> AddSheet(string name, string paperSize)
+    {
+        EnsureCurrentModel();
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        if (currentModel is null || GetSolidWorksDocumentType(currentModel) != 3)
+        {
+            throw new InvalidOperationException("Current document must be a drawing");
+        }
+
+        var paper = paperSize.Trim().ToUpperInvariant() switch
+        {
+            "A4" => 6,
+            "A3" => 8,
+            "A2" => 9,
+            "A1" => 10,
+            "A0" => 11,
+            _ => 6,
+        };
+
+        var created = TryInvoke(currentModel, "NewSheet3", name, paper, 1d, 1d, false, string.Empty, 0d, 0d, string.Empty, false)
+            ?? TryInvoke(currentModel, "SetupSheet5", name, paper, 1d, 1d, false, string.Empty, 0d, 0d, string.Empty, false, 0d, 0d, 0d, 0d, false);
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = created is not null,
+            ["sheet"] = name,
+            ["sheets"] = ListSheets(),
+            ["message"] = created is not null ? $"Added sheet '{name}'." : $"SOLIDWORKS did not add sheet '{name}'.",
+        };
+    }
+
+    public Dictionary<string, object?> ActivateDrawingView(string viewName)
+    {
+        EnsureCurrentModel();
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+        if (currentModel is null || GetSolidWorksDocumentType(currentModel) != 3)
+        {
+            throw new InvalidOperationException("Current document must be a drawing");
+        }
+
+        var activated = TryInvoke(currentModel, "ActivateView", viewName) is bool success && success;
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = activated,
+            ["view"] = viewName,
+            ["message"] = activated ? $"Activated drawing view '{viewName}'." : $"Could not activate drawing view '{viewName}'.",
+        };
+    }
+
+    public Dictionary<string, object?> SetDrawingView(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null || GetSolidWorksDocumentType(currentModel) != 3)
+        {
+            throw new InvalidOperationException("Current document must be a drawing");
+        }
+
+        var viewName = GetString(parameters, "viewName") ?? throw new InvalidOperationException("viewName is required.");
+        _ = ActivateDrawingView(viewName);
+        var currentView = ListDrawingViews().FirstOrDefault(view => string.Equals(Convert.ToString(view["name"]), viewName, StringComparison.OrdinalIgnoreCase));
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = currentView is not null,
+            ["view"] = viewName,
+            ["scale"] = currentView is not null && currentView.TryGetValue("scale", out var scale) ? scale : null,
+            ["message"] = currentView is not null ? $"Activated drawing view '{viewName}'." : $"Drawing view '{viewName}' was not found.",
         };
     }
 
@@ -1359,6 +2790,29 @@ public sealed class SolidWorksApi
         return null;
     }
 
+    private static string? TryGetAssemblyDocumentTemplate(object swApplication)
+    {
+        var attempts = new object?[]
+        {
+            TryInvoke(swApplication, "GetDocumentTemplate", 2, 0, 0d, 0d),
+            TryInvoke(swApplication, "GetDocumentTemplate", 2, string.Empty, 0, 0d, 0d),
+            TryInvoke(swApplication, "GetDocumentTemplate", 2, string.Empty, 0, 0, 0),
+            TryInvoke(swApplication, "GetTemplatePathName", 2, 0, 0d, 0d),
+            TryInvoke(swApplication, "GetTemplatePathName", 2),
+        };
+
+        foreach (var attempt in attempts)
+        {
+            var candidate = Convert.ToString(attempt);
+            if (!string.IsNullOrWhiteSpace(candidate) && candidate.EndsWith(".asmdot", StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
     private static string? TryGetDrawingDocumentTemplate(object swApplication)
     {
         var attempts = new object?[]
@@ -1380,6 +2834,140 @@ public sealed class SolidWorksApi
         }
 
         return null;
+    }
+
+    private int ApplySelection(SelectionSpec selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        if (currentModel is null)
+        {
+            return 0;
+        }
+
+        TryClearSelection();
+        var count = 0;
+
+        foreach (var planeName in selection.Planes ?? [])
+        {
+            var feature = TryInvoke(currentModel, "FeatureByName", planeName);
+            if (!TrySelectFeatureLikeObject(feature))
+            {
+                var extension = GetProperty(currentModel, "Extension");
+                var selected = extension is null
+                    ? null
+                    : TryInvoke(extension, "SelectByID2", planeName, "PLANE", 0d, 0d, 0d, count > 0, 0, null, 0);
+                if (selected is not bool success || !success)
+                {
+                    throw new InvalidOperationException($"Failed to select plane: {planeName}");
+                }
+            }
+
+            count++;
+        }
+
+        foreach (var axisName in selection.Axes ?? [])
+        {
+            var feature = TryInvoke(currentModel, "FeatureByName", axisName);
+            if (!TrySelectFeatureLikeObject(feature))
+            {
+                var extension = GetProperty(currentModel, "Extension");
+                var selected = extension is null
+                    ? null
+                    : TryInvoke(extension, "SelectByID2", axisName, "AXIS", 0d, 0d, 0d, count > 0, 0, null, 0);
+                if (selected is not bool success || !success)
+                {
+                    throw new InvalidOperationException($"Failed to select axis: {axisName}");
+                }
+            }
+
+            count++;
+        }
+
+        foreach (var sketchName in selection.Sketches ?? [])
+        {
+            var feature = TryInvoke(currentModel, "FeatureByName", sketchName);
+            if (!TrySelectFeatureLikeObject(feature))
+            {
+                var extension = GetProperty(currentModel, "Extension");
+                var selected = extension is null
+                    ? null
+                    : TryInvoke(extension, "SelectByID2", sketchName, "SKETCH", 0d, 0d, 0d, count > 0, 0, null, 0);
+                if (selected is not bool success || !success)
+                {
+                    throw new InvalidOperationException($"Failed to select sketch: {sketchName}");
+                }
+            }
+
+            count++;
+        }
+
+        foreach (var featureName in selection.Features ?? [])
+        {
+            var feature = TryInvoke(currentModel, "FeatureByName", featureName);
+            if (!TrySelectFeatureLikeObject(feature))
+            {
+                throw new InvalidOperationException($"Failed to select feature: {featureName}");
+            }
+
+            count++;
+        }
+
+        foreach (var componentName in selection.Components ?? [])
+        {
+            var component = ResolveAssemblyComponent(componentName) ?? throw new InvalidOperationException($"Component not found: {componentName}");
+            if (!TrySelectEntity(component, count > 0))
+            {
+                throw new InvalidOperationException($"Failed to select component: {componentName}");
+            }
+
+            count++;
+        }
+
+        return count;
+    }
+
+    private Dictionary<string, object?> ExtractTransformOrigin(object? transform)
+    {
+        if (transform is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["x"] = 0d,
+                ["y"] = 0d,
+                ["z"] = 0d,
+            };
+        }
+
+        var array = GetArrayFromObject(transform, "ArrayData");
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["x"] = array.Length > 9 ? array[9] * 1000d : 0d,
+            ["y"] = array.Length > 10 ? array[10] * 1000d : 0d,
+            ["z"] = array.Length > 11 ? array[11] * 1000d : 0d,
+        };
+    }
+
+    private object? ResolveAssemblyComponent(string componentName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(componentName);
+        if (currentModel is null || !IsAssemblyDocument(currentModel))
+        {
+            return null;
+        }
+
+        return ListAssemblyComponentsCore(includeHidden: true)
+            .FirstOrDefault(component => string.Equals(GetString(component, "Name2"), componentName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private IReadOnlyList<object> ListAssemblyComponentsCore(bool includeHidden)
+    {
+        if (currentModel is null)
+        {
+            return [];
+        }
+
+        var raw = TryInvoke(currentModel, "GetComponents", includeHidden);
+        return AsEnumerable(raw);
     }
 
     private string GetResolvedDrawingModelPath(Dictionary<string, object?> parameters)
@@ -1692,12 +3280,14 @@ public sealed class SolidWorksApi
         return string.IsNullOrWhiteSpace(path) ? 1 : GetDocumentType(path);
     }
 
-    private static bool TrySaveDocument(object model, string filePath, int options)
+    private bool TrySaveDocument(object model, string filePath, int options)
     {
+        var normalizedPath = NormalizeManagedOutputPath(filePath);
+        EnsureParentDirectory(normalizedPath);
         var extension = GetProperty(model, "Extension");
-        return TryInvoke(model, "SaveAs3", filePath, 0, options) is true
-            || TryInvoke(model, "SaveAs4", filePath, 0, options, 0, 0) is true
-            || TryInvoke(extension, "SaveAs", filePath, 0, options, null, 0, 0) is true;
+        return TryInvoke(model, "SaveAs3", normalizedPath, 0, options) is true
+            || TryInvoke(model, "SaveAs4", normalizedPath, 0, options, 0, 0) is true
+            || TryInvoke(extension, "SaveAs", normalizedPath, 0, options, null, 0, 0) is true;
     }
 
     private void EnsureConnected()
@@ -2125,6 +3715,9 @@ End Sub
             || featureName.Equals("Sensors", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsPlaneFeature(object? feature)
+        => feature is not null && (Convert.ToString(GetMethodValue(feature, "GetTypeName2")) ?? string.Empty).Contains("RefPlane", StringComparison.OrdinalIgnoreCase);
+
     private static IReadOnlyList<object> EnumerateRecentFeatures(object model, int maxFeatures = 25)
     {
         List<object> features = [];
@@ -2180,6 +3773,40 @@ End Sub
         var featureName = GetFeatureName(feature) ?? string.Empty;
         return featureName.Contains("Extrude", StringComparison.OrdinalIgnoreCase)
             || featureName.Contains("Boss-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private object? ResolveCreatedFeature(object model, object? directReturn, ISet<string> existingFeatures)
+    {
+        if (directReturn is not null && !existingFeatures.Contains(GetFeatureSignature(directReturn)))
+        {
+            return directReturn;
+        }
+
+        foreach (var candidate in EnumerateRecentFeatures(model, 500))
+        {
+            if (!existingFeatures.Contains(GetFeatureSignature(candidate)))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static void TryRenameFeature(object feature, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        try
+        {
+            SetProperty(feature, "Name", name);
+        }
+        catch
+        {
+        }
     }
 
     private static bool IsSketchFeature(object? feature)
@@ -2421,6 +4048,19 @@ End Sub
         return double.TryParse(Convert.ToString(value), out var parsed) ? parsed : defaultValue;
     }
 
+    private static bool GetBool(Dictionary<string, object?> dictionary, string key, bool defaultValue)
+    {
+        return dictionary.TryGetValue(key, out var value) && bool.TryParse(Convert.ToString(value), out var parsed) ? parsed : defaultValue;
+    }
+
+    private static double[] GetArrayFromMethod(object target, string methodName, params object?[] args)
+    {
+        var value = TryInvoke(target, methodName, args);
+        return value is System.Collections.IEnumerable enumerable
+            ? enumerable.Cast<object?>().Select(item => double.TryParse(Convert.ToString(item), out var parsed) ? parsed : 0d).ToArray()
+            : [];
+    }
+
     private static double[] GetArrayFromObject(object target, string propertyName)
     {
         var value = GetProperty(target, propertyName);
@@ -2610,6 +4250,123 @@ End Sub
     private static string FormatDebugValue(object? value)
         => value is null ? "null" : Convert.ToString(value) ?? value.GetType().FullName ?? string.Empty;
 
+    private static bool IsAssemblyDocument(object model)
+        => GetSolidWorksDocumentType(model) == 2;
+
+    private static bool IsPartDocument(object model)
+        => GetSolidWorksDocumentType(model) == 1;
+
+    private static bool IsAxisFeature(object? feature)
+        => feature is not null && (Convert.ToString(GetMethodValue(feature, "GetTypeName2")) ?? string.Empty).Contains("RefAxis", StringComparison.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<object> GetModelBodies(object model)
+    {
+        var bodies = AsEnumerable(TryInvoke(model, "GetBodies2", 0, false));
+        if (bodies.Count > 0)
+        {
+            return bodies;
+        }
+
+        bodies = AsEnumerable(TryInvoke(model, "GetBodies2", 0));
+        if (bodies.Count > 0)
+        {
+            return bodies;
+        }
+
+        bodies = AsEnumerable(TryInvoke(model, "GetBodies"));
+        if (bodies.Count > 0)
+        {
+            return bodies;
+        }
+
+        if (IsAssemblyDocument(model))
+        {
+            var assemblyBodies = new List<object>();
+            foreach (var component in AsEnumerable(TryInvoke(model, "GetComponents", true)))
+            {
+                assemblyBodies.AddRange(AsEnumerable(TryInvoke(component, "GetBodies2", 0) ?? TryInvoke(component, "GetBodies")));
+            }
+
+            return assemblyBodies;
+        }
+
+        return [];
+    }
+
+    private static double[] TryGetBodyBox(object body)
+        => GetArrayFromMethod(body, "GetBodyBox");
+
+    private static (double X, double Y, double Z) GetFacePickPoint(object face)
+    {
+        var box = GetArrayFromMethod(face, "GetBox");
+        if (box.Length >= 6)
+        {
+            return ((box[0] + box[3]) / 2d, (box[1] + box[4]) / 2d, (box[2] + box[5]) / 2d);
+        }
+
+        var point = GetArrayFromMethod(face, "GetClosestPointOn", 0d, 0d, 0d);
+        return point.Length >= 3 ? (point[0], point[1], point[2]) : (0d, 0d, 0d);
+    }
+
+    private static string NormalizeSurfaceType(int code)
+        => code switch
+        {
+            4001 => "plane",
+            4002 => "cylinder",
+            4003 => "cone",
+            4004 => "sphere",
+            4005 => "torus",
+            4006 => "bsurface",
+            _ => $"surface_{code}",
+        };
+
+    private static string NormalizeCurveType(int code)
+        => code switch
+        {
+            3001 => "line",
+            3002 => "circle",
+            3003 => "ellipse",
+            3005 => "bcurve",
+            _ => $"curve_{code}",
+        };
+
+    private static Dictionary<string, object?> CreatePointDictionary(double x, double y, double z)
+        => new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["x"] = Math.Round(x, 6),
+            ["y"] = Math.Round(y, 6),
+            ["z"] = Math.Round(z, 6),
+        };
+
+    private static double? ReadMeasureValue(object measure, string propertyName, double scale)
+    {
+        var raw = GetProperty(measure, propertyName);
+        if (raw is null)
+        {
+            return null;
+        }
+
+        if (!double.TryParse(Convert.ToString(raw, System.Globalization.CultureInfo.InvariantCulture), out var value))
+        {
+            return null;
+        }
+
+        return value < 0 ? null : Math.Round(value * scale, 6);
+    }
+
+    private static bool TrySetProperty(object target, string propertyName, object? value)
+    {
+        try
+        {
+            SetProperty(target, propertyName, value);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static string NormalizePrimaryPlaneName(string? plane)
     {
         if (string.IsNullOrWhiteSpace(plane))
@@ -2637,6 +4394,149 @@ End Sub
         }
 
         yield return normalizedPlane + " Plane";
+    }
+
+    private object? ResolveSketch(string? sketchName)
+    {
+        if (currentModel is null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(sketchName))
+        {
+            var named = TryInvoke(currentModel, "FeatureByName", sketchName);
+            if (IsSketchFeature(named))
+            {
+                return named;
+            }
+        }
+
+        var activeSketch = GetActiveSketch(currentModel);
+        if (activeSketch is not null)
+        {
+            return activeSketch;
+        }
+
+        return EnumerateRecentFeatures(currentModel).FirstOrDefault(IsSketchFeature);
+    }
+
+    private IEnumerable<object> ResolveSketchRelationEntities(SelectionSpec selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        var sketch = ResolveSketch(selection.SketchName) ?? throw new InvalidOperationException($"Sketch not found: {selection.SketchName ?? "<active>"}");
+        var specificSketch = TryInvoke(sketch, "GetSpecificFeature2") ?? sketch;
+
+        foreach (var index in selection.SketchSegments ?? [])
+        {
+            var segment = GetSketchEntityAtIndex(specificSketch, "GetSketchSegments", "GetSketchSegments2", index, "sketch segment");
+            yield return segment;
+        }
+
+        foreach (var index in selection.SketchPoints ?? [])
+        {
+            var point = GetSketchEntityAtIndex(specificSketch, "GetSketchPoints2", "GetSketchPoints", index, "sketch point");
+            yield return point;
+        }
+    }
+
+    private static object GetSketchEntityAtIndex(object sketch, string primaryMethod, string secondaryMethod, int index, string label)
+    {
+        var entries = AsEnumerable(TryInvoke(sketch, primaryMethod) ?? TryInvoke(sketch, secondaryMethod));
+        if (index < 0 || index >= entries.Count)
+        {
+            throw new InvalidOperationException($"{label} index {index} is out of range (0..{entries.Count - 1}).");
+        }
+
+        return entries[index];
+    }
+
+    private static bool TrySelectEntity(object entity, bool append)
+    {
+        var selected = TryInvoke(entity, "Select4", append, null)
+            ?? TryInvoke(entity, "Select2", append, 0)
+            ?? TryInvoke(entity, "Select", append);
+
+        return selected is bool succeeded && succeeded;
+    }
+
+    private void SetDimensionValueCore(object dimension, double systemValue)
+    {
+        ArgumentNullException.ThrowIfNull(dimension);
+
+        if (HasProperty(dimension, "SystemValue"))
+        {
+            SetProperty(dimension, "SystemValue", systemValue);
+            return;
+        }
+
+        if (HasProperty(dimension, "Value"))
+        {
+            SetProperty(dimension, "Value", systemValue);
+            return;
+        }
+
+        if (TryInvoke(dimension, "SetSystemValue", systemValue) is bool systemValueSet && systemValueSet)
+        {
+            return;
+        }
+
+        if (TryInvoke(dimension, "SetValue", systemValue) is bool valueSet && valueSet)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException("Failed to update dimension value.");
+    }
+
+    private static List<object> AsEnumerable(object? value)
+    {
+        return value is System.Collections.IEnumerable enumerable
+            ? enumerable.Cast<object?>().Where(item => item is not null).Cast<object>().ToList()
+            : [];
+    }
+
+    private static string BuildEntityHandle(string kind, string name)
+        => $"{kind}:{name}";
+
+    private static string? NormalizeOutputRoot(string? outputRoot)
+    {
+        if (string.IsNullOrWhiteSpace(outputRoot))
+        {
+            return null;
+        }
+
+        return Path.GetFullPath(outputRoot.Trim());
+    }
+
+    private string NormalizeManagedOutputPath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        if (string.IsNullOrWhiteSpace(outputRoot))
+        {
+            return fullPath;
+        }
+
+        var rootWithSeparator = outputRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? outputRoot
+            : outputRoot + Path.DirectorySeparatorChar;
+
+        if (!fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(fullPath, outputRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Output path is outside SW_MCP_OUTPUT_ROOT: {fullPath}");
+        }
+
+        return fullPath;
+    }
+
+    private static void EnsureParentDirectory(string path)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
     }
 
     private void TryClearSelection()

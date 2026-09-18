@@ -131,14 +131,36 @@ internal sealed class McpClient : IDisposable
 
         var rawJson = result.ToJsonString(serializerOptions);
         var displayText = rawJson;
+        JsonObject? structuredData = null;
+        string? feedbackImagePath = null;
+        string? feedbackMediaType = null;
         var content = result["content"] as JsonArray;
         if (content is { Count: > 0 } && content[0] is JsonObject first)
         {
             displayText = first["text"]?.GetValue<string>() ?? rawJson;
+
+            if (!string.IsNullOrWhiteSpace(displayText) && displayText.TrimStart().StartsWith('{'))
+            {
+                try
+                {
+                    structuredData = JsonNode.Parse(displayText) as JsonObject;
+                }
+                catch (JsonException)
+                {
+                }
+            }
+
+            if (structuredData is not null
+                && structuredData["feedbackEligible"]?.GetValue<bool>() == true
+                && structuredData["kind"]?.GetValue<string>() == "screenshot")
+            {
+                feedbackImagePath = structuredData["outputPath"]?.GetValue<string>();
+                feedbackMediaType = structuredData["mediaType"]?.GetValue<string>();
+            }
         }
 
         var stderrSummary = BuildStandardErrorSummary(stderrCheckpoint);
-        return new McpToolCallResult(displayText, rawJson, stderrSummary);
+        return new McpToolCallResult(displayText, rawJson, stderrSummary, structuredData, feedbackImagePath, feedbackMediaType);
     }
 
     private async Task<JsonArray> ListToolsAsync(CancellationToken cancellationToken)

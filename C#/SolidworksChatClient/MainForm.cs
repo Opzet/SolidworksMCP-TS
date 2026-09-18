@@ -37,14 +37,114 @@ public partial class MainForm : Form
         AppendLog("system", "Tip: Enter sends message, Shift+Enter adds a new line. Type /new to start a fresh chat.");
     }
 
+
+    public void PopulateDemos()
+    {
+
+        /*
+        Create a Simple Box
+1. sw_create_part()
+2. sw_create_sketch(plane='Front Plane')
+3. sw_sketch_rectangle(x1=0, y1=0, x2=100, y2=60)
+4. sw_exit_sketch()
+5. sw_extrude(depth=40)
+6. sw_save_document(file_path='C:/parts/box.sldprt')
+Parametric Cylinder
+1. sw_create_part()
+2. sw_create_sketch(plane='Front Plane')
+3. sw_sketch_circle(cx=0, cy=0, radius=25)
+4. sw_exit_sketch()
+5. sw_extrude(depth=100)
+6. sw_add_equation('"Height" = 100mm')
+7. sw_add_equation('"D1@Boss-Extrude1" = "Height"')
+Assembly with Mates
+1. sw_create_assembly()
+2. sw_insert_component(file_path='C:/parts/base.sldprt', fixed=True)
+3. sw_insert_component(file_path='C:/parts/shaft.sldprt', z=50)
+4. sw_add_mate(mate_type='CONCENTRIC', entity1='Face<1>@shaft-1', entity2='Face<1>@base-1')
+5. sw_add_mate(mate_type='COINCIDENT', entity1='Face<2>@shaft-1', entity2='Face<2>@base-1')
+Sheet Metal Bracket (with bend)
+1. sw_create_part()
+2. sw_create_sketch(plane='Top Plane')
+3. sw_sketch_rectangle(x1=0, y1=0, x2=200, y2=100)
+4. sw_exit_sketch()
+5. sw_base_flange(thickness=2.0, bend_radius=1.5)
+6. sw_create_sketch(plane='<top face>')
+7. sw_sketch_line(...)  # bend line
+8. sw_exit_sketch()
+9. sw_sketched_bend(angle=90)
+10. sw_flatten_sheet_metal()
+11. sw_export_flat_pattern('C:/parts/bracket_flat.dxf')
+Aluminum Part with Custom Color and Mass Analysis
+1. sw_create_part()
+2. sw_create_sketch('Front Plane')
+3. sw_sketch_circle(0, 0, 25)
+4. sw_exit_sketch()
+5. sw_extrude(depth=100)
+6. sw_set_material('Aluminum 6061-T6')
+7. sw_set_appearance_color(r=180, g=180, b=200, transparency=0.0)
+8. sw_get_mass_properties()  # returns mass, volume, COG
+Drawing with Multiple Views + GD&T
+1. sw_create_drawing()
+2. sw_add_drawing_view(view_type='front', x=100, y=200, scale=1.0)
+3. sw_add_projected_view(parent_view_name='Drawing View1', direction='right')
+4. sw_add_detail_view(x=80, y=150, radius=15, scale=2.0, label='A')
+5. sw_add_centerline(view_name='Drawing View1')
+6. sw_add_geometric_tolerance(gtol_text='Position 0.1 A B C', x=50, y=80)
+7. sw_add_surface_finish(symbol_type='machining', roughness='3.2')
+8. sw_add_bom_table()
+9. sw_export_drawing_pdf('C:/drawings/part.pdf')
+
+
+        */
+        //const string demoPrompt = "Create a complete 4-bar linkage demo using available MCP tools only. Steps: 1) create a new part and sketch linkage plates with holes, 2) extrude features, 3) set key dimensions, 4) rebuild model, 5) create drawing from model, 6) add front and isometric views, 7) summarize generated artifacts and remaining manual CAD steps if any.";
+        // https://help.solidworks.com/2026/english/api
+        const string demoPrompt = @"
+                                    CAD 4-bar linkage parts and align in assemblky using only the available MCP tools.
+                                    
+                                    Objective:
+
+                                    Build a fully defined parametric 4-bar linkage model, generate the required CAD parts and assembly files and provide a concise summary of the results.
+                                    List missing or desired mcp tools that would be needed to fully automate the 4-bar linkage creation process.  
+                                    
+                                    Workflow:
+                                    1. Create ground link, crank, coupler, and rocker CAD parts for 4-bar linkage assembly
+                                    2. Sketch each linkage components (ground link, crank, coupler, and rocker), including all required hole locations.
+                                    3. Apply geometric constraints and dimensions to fully define each sketch.
+                                    4. Extrude the sketches into solid bodies with appropriate feature names.
+                                    5. Set and document the critical linkage dimensions (link lengths, hole diameters, plate thicknesses, and center-to-center distances).
+                                    6. Rebuild/regenerate the model and verify that all features are successfully created without errors.
+                                    7. Save all solidworks parts with relevant names.
+                                    
+                                    8. Create a drawing based on the completed model.
+                                    9. Insert at minimum:
+                                    - One front view
+                                    - One isometric view
+                                    10. Ensure drawing views are properly scaled and updated.
+                                    
+                                    Final Output:
+                                    - List every generated artifact (part files, drawings, etc.).
+                                    - Report the final dimensions used in the model.
+                                    - Confirm whether the model and drawing were created successfully.
+                                    - Identify any steps that could not be completed through MCP tools alone.
+                                    - Provide any remaining manual CAD actions required to achieve a production-ready model.
+                                    
+                                    ";
+
+        //Load up Combo comboBox1 with demo
+
+        // opon click of DemoButton_Click
+
+      //  await SendPromptAsync(demoPrompt).ConfigureAwait(true);
+
+    }
     private async void ConnectButton_Click(object? sender, EventArgs e) => await ConnectAsync( ).ConfigureAwait(true);
 
     private async void SendButton_Click(object? sender, EventArgs e) => await SendCurrentInputAsync( ).ConfigureAwait(true);
 
     private async void DecodeImageButton_Click(object? sender, EventArgs e) => await SendImageDecodePromptAsync( ).ConfigureAwait(true);
 
-    private async void DemoButton_Click(object? sender, EventArgs e) => await SendFourBarDemoPromptAsync( ).ConfigureAwait(true);
-
+  
     private void StopButton_Click(object? sender, EventArgs e)
     {
         var operation = currentOperationCts;
@@ -260,44 +360,7 @@ public partial class MainForm : Form
         await SendPromptAsync(decodePrompt).ConfigureAwait(true);
     }
 
-    private async Task SendFourBarDemoPromptAsync()
-    {
-        //const string demoPrompt = "Create a complete 4-bar linkage demo using available MCP tools only. Steps: 1) create a new part and sketch linkage plates with holes, 2) extrude features, 3) set key dimensions, 4) rebuild model, 5) create drawing from model, 6) add front and isometric views, 7) summarize generated artifacts and remaining manual CAD steps if any.";
-
-        const string demoPrompt = @"
-                                    CAD 4-bar linkage parts and align in assemblky using only the available MCP tools.
-                                    
-                                    Objective:
-
-                                    Build a fully defined parametric 4-bar linkage model, generate the required CAD parts and assembly files and provide a concise summary of the results.
-                                    List missing or desired mcp tools that would be needed to fully automate the 4-bar linkage creation process.
-                                    
-                                    Workflow:
-                                    1. Create ground link, crank, coupler, and rocker CAD parts for 4-bar linkage assembly
-                                    2. Sketch each linkage components (ground link, crank, coupler, and rocker), including all required hole locations.
-                                    3. Apply geometric constraints and dimensions to fully define each sketch.
-                                    4. Extrude the sketches into solid bodies with appropriate feature names.
-                                    5. Set and document the critical linkage dimensions (link lengths, hole diameters, plate thicknesses, and center-to-center distances).
-                                    6. Rebuild/regenerate the model and verify that all features are successfully created without errors.
-                                    7. Save all solidworks parts with relevant names.
-                                    
-                                    8. Create a drawing based on the completed model.
-                                    9. Insert at minimum:
-                                    - One front view
-                                    - One isometric view
-                                    10. Ensure drawing views are properly scaled and updated.
-                                    
-                                    Final Output:
-                                    - List every generated artifact (part files, drawings, etc.).
-                                    - Report the final dimensions used in the model.
-                                    - Confirm whether the model and drawing were created successfully.
-                                    - Identify any steps that could not be completed through MCP tools alone.
-                                    - Provide any remaining manual CAD actions required to achieve a production-ready model.
-                                    
-                                    ";
-
-        await SendPromptAsync(demoPrompt).ConfigureAwait(true);
-    }
+   
 
     private async Task SendPromptAsync(string prompt)
     {
@@ -527,6 +590,13 @@ public partial class MainForm : Form
 
             AppendLog("assistant", result.FinalResponse);
 
+            if (!string.IsNullOrWhiteSpace(result.FeedbackImagePath) && File.Exists(result.FeedbackImagePath))
+            {
+                LoadPreviewImage(result.FeedbackImagePath, "Generated feedback image ready for the next prompt.");
+                attachImageCheckBox.Checked = true;
+                AppendLog("system", $"Visual feedback captured: {result.FeedbackImagePath}");
+            }
+
             if (result.FailureDiagnostic is not null)
             {
                 AppendLog("error", $"Execution failures: {result.FailureDiagnostic.FailedToolCount}");
@@ -639,12 +709,24 @@ public partial class MainForm : Form
             return;
         }
 
-        selectedImagePath = dialog.FileName;
-        imagePathLabel.Text = selectedImagePath;
+        LoadPreviewImage(dialog.FileName);
+    }
 
-        using var stream = File.OpenRead(selectedImagePath);
+    private void LoadPreviewImage(string imagePath, string? statusMessage = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
+
+        selectedImagePath = imagePath;
+        imagePathLabel.Text = imagePath;
+
+        using var stream = File.OpenRead(imagePath);
         imagePreview.Image?.Dispose( );
         imagePreview.Image = Image.FromStream(stream);
+
+        if (!string.IsNullOrWhiteSpace(statusMessage))
+        {
+            statusLabel.Text = $"Status: {statusMessage}";
+        }
     }
 
     private void AppendLog(string role, string message)

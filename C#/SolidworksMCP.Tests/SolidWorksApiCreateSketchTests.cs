@@ -209,9 +209,80 @@ public sealed class SolidWorksApiCreateSketchTests
         Assert.AreEqual(1, model.ForceRebuild3Count);
     }
 
-    private static SolidWorksApi CreateApiWithModel(object model)
+    [TestMethod]
+    public void GetActiveDocumentInfoReportsUnsavedPart()
     {
-        SolidWorksApi api = new();
+        FakeDocumentModel model = new("Part42", string.Empty, 1);
+        SolidWorksApi api = CreateApiWithModel(model);
+
+        Dictionary<string, object?> result = api.GetActiveDocumentInfo();
+
+        Assert.AreEqual(true, result["hasActiveDocument"]);
+        Assert.AreEqual("Part", result["type"]);
+        Assert.AreEqual(false, result["isSaved"]);
+        Assert.AreEqual("Part42", result["title"]);
+    }
+
+    [TestMethod]
+    public async Task SaveDocumentUsesRequestedPath()
+    {
+        FakeSaveDocumentModel model = new();
+        SolidWorksApi api = CreateApiWithModel(model);
+        McpToolDefinition tool = ModelingTools.GetTools().Single(item => item.Name == "save_document");
+        var path = Path.Combine(Path.GetTempPath(), $"swmcp-{Guid.NewGuid():N}", "saved-part.sldprt");
+        using JsonDocument document = JsonDocument.Parse(JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["path"] = path,
+        }));
+
+        var result = await tool.Handler(document.RootElement, api, CancellationToken.None);
+
+        Assert.IsInstanceOfType(result, typeof(string));
+        Assert.AreEqual(path, model.SavedPath);
+    }
+
+    [TestMethod]
+    public void SaveDocumentRejectsPathOutsideConfiguredOutputRoot()
+    {
+        FakeSaveDocumentModel model = new();
+        var outputRoot = Path.Combine(Path.GetTempPath(), $"swmcp-root-{Guid.NewGuid():N}");
+        SolidWorksApi api = CreateApiWithModel(model, outputRoot);
+        var disallowedPath = Path.Combine(Path.GetTempPath(), $"swmcp-outside-{Guid.NewGuid():N}", "saved-part.sldprt");
+
+        var exception = Assert.ThrowsException<InvalidOperationException>(() => api.SaveDocument(disallowedPath));
+
+        StringAssert.Contains(exception.Message, "outside SW_MCP_OUTPUT_ROOT");
+    }
+
+    [TestMethod]
+    public async Task SaveActiveDocumentUsesExistingPath()
+    {
+        var existingPath = Path.Combine(Path.GetTempPath(), $"swmcp-{Guid.NewGuid():N}", "existing-part.sldprt");
+        FakeSaveDocumentModel model = new(existingPath);
+        SolidWorksApi api = CreateApiWithModel(model);
+        McpToolDefinition tool = ModelingTools.GetTools().Single(item => item.Name == "save_active_document");
+        using JsonDocument document = JsonDocument.Parse("{}");
+
+        var result = await tool.Handler(document.RootElement, api, CancellationToken.None);
+
+        Assert.IsInstanceOfType(result, typeof(string));
+        Assert.AreEqual(existingPath, model.Save3Path);
+    }
+
+    [TestMethod]
+    public void SaveActiveDocumentRejectsUnsavedDocument()
+    {
+        FakeSaveDocumentModel model = new();
+        SolidWorksApi api = CreateApiWithModel(model);
+
+        var exception = Assert.ThrowsException<InvalidOperationException>(() => api.SaveActiveDocument());
+
+        StringAssert.Contains(exception.Message, "use save_document first");
+    }
+
+    private static SolidWorksApi CreateApiWithModel(object model, string? outputRoot = null)
+    {
+        SolidWorksApi api = new(outputRoot);
         FieldInfo? field = typeof(SolidWorksApi).GetField("currentModel", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(field);
         field.SetValue(api, model);
@@ -236,6 +307,45 @@ public sealed class SolidWorksApiCreateSketchTests
         public int GetFeatureCount() => features.Count;
 
         public object? FeatureByPositionReverse(int index) => index >= 0 && index < features.Count ? features[index] : null;
+    }
+
+    private sealed class FakeDocumentModel(string title, string path, int documentType)
+    {
+        public string GetTitle() => title;
+
+        public string GetPathName() => path;
+
+        public new int GetType() => documentType;
+    }
+
+    private sealed class FakeSaveDocumentModel(string? currentPath = null)
+    {
+        public string SavedPath { get; private set; } = string.Empty;
+
+        public string Save3Path { get; private set; } = string.Empty;
+
+        public string GetTitle() => "UnsavedPart";
+
+        public string GetPathName() => currentPath ?? string.Empty;
+
+        public new int GetType() => 1;
+
+        public bool Save3(int options, int errors, int warnings)
+        {
+            _ = options;
+            _ = errors;
+            _ = warnings;
+            Save3Path = GetPathName();
+            return !string.IsNullOrWhiteSpace(Save3Path);
+        }
+
+        public bool SaveAs3(string filePath, int version, int options)
+        {
+            _ = version;
+            _ = options;
+            SavedPath = filePath;
+            return true;
+        }
     }
 
     private sealed class FakeLateBoundModel(FakeLateBoundSketchManager sketchManager)

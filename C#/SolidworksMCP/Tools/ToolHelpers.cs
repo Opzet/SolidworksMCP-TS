@@ -51,6 +51,48 @@ internal static class ToolHelpers
         return dictionary ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
     }
 
+    public static SelectionSpec GetSelection(IDictionary<string, object?> arguments, string key = "selection")
+    {
+        var selection = GetDictionary(arguments, key);
+        return new SelectionSpec
+        {
+            Faces = GetIntList(selection, "faces"),
+            Edges = GetIntList(selection, "edges"),
+            Vertices = GetIntList(selection, "vertices"),
+            Planes = GetStringList(selection, "planes"),
+            Axes = GetStringList(selection, "axes"),
+            Sketches = GetStringList(selection, "sketches"),
+            SketchSegments = GetIntList(selection, "sketch_segments"),
+            SketchPoints = GetIntList(selection, "sketch_points"),
+            SketchName = GetString(selection, "sketch_name"),
+            Features = GetStringList(selection, "features"),
+            Components = GetStringList(selection, "components"),
+        };
+    }
+
+    public static List<int> GetIntList(IDictionary<string, object?> arguments, string key)
+    {
+        if (!arguments.TryGetValue(key, out var value))
+        {
+            return [];
+        }
+
+        return value switch
+        {
+            IEnumerable<object?> enumerable => enumerable.Select(ConvertToInt32).ToList(),
+            JsonElement element when element.ValueKind == JsonValueKind.Array => element.EnumerateArray().Select(item => ConvertToInt32(item)).ToList(),
+            _ => [],
+        };
+    }
+
+    private static int ConvertToInt32(object? value)
+        => value switch
+        {
+            JsonElement element when element.ValueKind == JsonValueKind.Number => element.GetInt32(),
+            JsonElement element when element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), out var parsed) => parsed,
+            _ => Convert.ToInt32(value),
+        };
+
     public static object SuccessText(string text) => text;
 
     public static object SuccessObject(Dictionary<string, object?> data) => data;

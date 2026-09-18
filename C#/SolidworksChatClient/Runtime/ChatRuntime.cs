@@ -1,12 +1,13 @@
 namespace SolidworksChatClient.Runtime;
 
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 internal sealed class ChatRuntime : IDisposable
 {
     private const int MaxRounds = 8;
-    private const string SystemPrompt = "You are a SolidWorks CAD assistant. Use MCP tools whenever CAD actions are required. Be deterministic. For part creation workflows, first enumerate templates with list_part_templates (if available), then select/create the part using create_part, then continue with create_sketch, add_line/add_circle/add_rectangle, exit_sketch, create_extrusion, set_dimension, rebuild_model, create_drawing_from_model, and add_drawing_view. If a required capability is unavailable, clearly state the limitation and continue with available tools.";
+    private const string SystemPrompt = "You are a SolidWorks CAD assistant for SolidWorks 2026 and newer only. Use MCP tools whenever CAD actions are required. Be deterministic. Do not plan for or mention compatibility with older SolidWorks versions, and do not suggest fallback workflows for prior releases. Before geometry edits, check document context with get_active_document_info and use list_reference_planes, list_sketches, list_sketch_segments, list_components, and list_dimensions when selection or stable handles are needed. Prefer declarative selection objects over implicit UI selection. For part creation workflows, first enumerate templates with list_part_templates (if available), then create_part or create_assembly as appropriate, then continue with create_sketch, add_line/add_circle/add_rectangle, add_relation, add_dimension, exit_sketch, create_extrusion, set_dimension, insert_component, add_mate, and drawing tools as needed. Plans must explicitly include save/status/rebuild verification by using get_active_document_info before major actions, get_sketch_status while constraining sketches, get_rebuild_status or rebuild_model after geometry or mate changes, save_document when an unsaved document first needs a durable file path, save_active_document only for later in-place saves, and capture_screenshot after meaningful CAD changes when visual feedback would help the model inspect the result. If a required capability is unavailable, clearly state the limitation and continue with available SolidWorks 2026+ tools.";
 
     private readonly ChatSettings settings;
     private readonly McpClient mcp;
@@ -148,6 +149,8 @@ internal sealed class ChatRuntime : IDisposable
         {
             "Approval received. Executing MCP plan.",
         };
+        string? feedbackImagePath = null;
+        string? feedbackMediaType = null;
         var totalSteps = currentCalls.Count;
         var completedSteps = 0;
 
@@ -176,8 +179,22 @@ internal sealed class ChatRuntime : IDisposable
                     succeeded,
                     failureSummary,
                     diagnosticSummary,
-                    result.RawJson));
-                conversation.Add(new OllamaMessage("tool", result.DisplayText, ToolName: call.Function.Name));
+                    result.RawJson,
+                    result.FeedbackImagePath,
+                    result.FeedbackMediaType));
+
+                if (!string.IsNullOrWhiteSpace(result.FeedbackImagePath) && File.Exists(result.FeedbackImagePath))
+                {
+                    feedbackImagePath = result.FeedbackImagePath;
+                    feedbackMediaType = result.FeedbackMediaType;
+                    var imageBase64 = Convert.ToBase64String(await File.ReadAllBytesAsync(result.FeedbackImagePath, cancellationToken).ConfigureAwait(false));
+                    conversation.Add(new OllamaMessage("tool", result.DisplayText, ToolName: call.Function.Name, Images: [imageBase64]));
+                    progressUpdates.Add($"Captured visual feedback from {call.Function.Name}: {Path.GetFileName(result.FeedbackImagePath)}");
+                }
+                else
+                {
+                    conversation.Add(new OllamaMessage("tool", result.DisplayText, ToolName: call.Function.Name));
+                }
                 if (!succeeded && failureSummary is not null)
                 {
                     progressUpdates.Add($"Tool {stepNumber}/{totalSteps} reported a failure: {failureSummary}");
@@ -201,7 +218,9 @@ internal sealed class ChatRuntime : IDisposable
                     toolCalls,
                     progressUpdates,
                     assistantMessage,
-                    BuildFailureDiagnostic(toolCalls));
+                    BuildFailureDiagnostic(toolCalls),
+                    feedbackImagePath,
+                    feedbackMediaType);
             }
 
             currentCalls = response.Message.ToolCalls;
@@ -210,7 +229,7 @@ internal sealed class ChatRuntime : IDisposable
 
         progressUpdates.Add("Reached tool-call safety limit before assistant produced a final answer.");
         const string finalMessage = "Reached tool-call round limit before model produced a final answer.";
-        return new ChatTurnResult(finalMessage, toolCalls, progressUpdates, finalMessage, BuildFailureDiagnostic(toolCalls));
+        return new ChatTurnResult(finalMessage, toolCalls, progressUpdates, finalMessage, BuildFailureDiagnostic(toolCalls), feedbackImagePath, feedbackMediaType);
     }
 
     public async Task<ChatTurnResult> SendAsync(string userPrompt, string? imageBase64, CancellationToken cancellationToken = default)

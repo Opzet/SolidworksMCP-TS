@@ -14,6 +14,8 @@ public sealed record AppConfiguration
 
     public string? StateFile { get; init; }
 
+    public string? OutputRoot { get; init; }
+
     public string LogLevel { get; init; } = "info";
 
     public static AppConfiguration LoadFromEnvironment()
@@ -26,6 +28,7 @@ public sealed record AppConfiguration
             PdmVault = Environment.GetEnvironmentVariable("PDM_VAULT"),
             SqlConnection = Environment.GetEnvironmentVariable("SQL_CONNECTION"),
             StateFile = Environment.GetEnvironmentVariable("STATE_FILE"),
+            OutputRoot = Environment.GetEnvironmentVariable("SW_MCP_OUTPUT_ROOT"),
             LogLevel = Environment.GetEnvironmentVariable("LOG_LEVEL") ?? "info",
         };
     }

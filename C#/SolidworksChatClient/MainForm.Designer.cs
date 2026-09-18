@@ -57,6 +57,7 @@ partial class MainForm
         headerPanel = new Panel( );
         appTitleLabel = new Label( );
         statusLabel = new Label( );
+        btnLaunchSolidoworksAndTestConnection = new Button( );
         mainTabs = new TabControl( );
         workspaceTab = new TabPage( );
         workspaceLayout = new TableLayoutPanel( );
@@ -65,11 +66,11 @@ partial class MainForm
         rightPanel = new TableLayoutPanel( );
         uploadButton = new Button( );
         imagePathLabel = new Label( );
-        btnLaunchSolidoworksAndTestConnection = new Button( );
         attachImageCheckBox = new CheckBox( );
         imagePreview = new PictureBox( );
         decodeImageButton = new Button( );
         demoButton = new Button( );
+        comboBox1 = new ComboBox( );
         inputPanel = new TableLayoutPanel( );
         inputBox = new TextBox( );
         sendButton = new Button( );
@@ -122,6 +123,7 @@ partial class MainForm
         headerPanel.BackColor = Color.FromArgb(  37,   41,   48);
         headerPanel.Controls.Add(appTitleLabel);
         headerPanel.Controls.Add(statusLabel);
+        headerPanel.Controls.Add(btnLaunchSolidoworksAndTestConnection);
         headerPanel.Dock = DockStyle.Top;
         headerPanel.Location = new Point(12, 12);
         headerPanel.Margin = new Padding(0, 0, 0, 10);
@@ -151,6 +153,23 @@ partial class MainForm
         statusLabel.Size = new Size(116, 15);
         statusLabel.TabIndex = 1;
         statusLabel.Text = "Status: disconnected";
+        // 
+        // btnLaunchSolidoworksAndTestConnection
+        // 
+        btnLaunchSolidoworksAndTestConnection.AutoSize = true;
+        btnLaunchSolidoworksAndTestConnection.BackColor = Color.FromArgb(  255,   128,   128);
+        btnLaunchSolidoworksAndTestConnection.FlatAppearance.BorderSize = 0;
+        btnLaunchSolidoworksAndTestConnection.FlatStyle = FlatStyle.Flat;
+        btnLaunchSolidoworksAndTestConnection.ForeColor = Color.White;
+        btnLaunchSolidoworksAndTestConnection.Location = new Point(1041, 7);
+        btnLaunchSolidoworksAndTestConnection.Margin = new Padding(0, 12, 0, 0);
+        btnLaunchSolidoworksAndTestConnection.Name = "btnLaunchSolidoworksAndTestConnection";
+        btnLaunchSolidoworksAndTestConnection.Padding = new Padding(12, 6, 12, 6);
+        btnLaunchSolidoworksAndTestConnection.Size = new Size(212, 37);
+        btnLaunchSolidoworksAndTestConnection.TabIndex = 6;
+        btnLaunchSolidoworksAndTestConnection.Text = "Warm up Solidworks";
+        btnLaunchSolidoworksAndTestConnection.UseVisualStyleBackColor = false;
+        btnLaunchSolidoworksAndTestConnection.Click += btnLaunchSolidoworksAndTestConnection_Click;
         // 
         // mainTabs
         // 
@@ -233,11 +252,11 @@ partial class MainForm
         rightPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 20F));
         rightPanel.Controls.Add(uploadButton, 0, 0);
         rightPanel.Controls.Add(imagePathLabel, 0, 1);
-        rightPanel.Controls.Add(btnLaunchSolidoworksAndTestConnection, 0, 6);
         rightPanel.Controls.Add(attachImageCheckBox, 0, 2);
         rightPanel.Controls.Add(imagePreview, 0, 3);
         rightPanel.Controls.Add(decodeImageButton, 0, 4);
         rightPanel.Controls.Add(demoButton, 0, 5);
+        rightPanel.Controls.Add(comboBox1, 0, 6);
         rightPanel.Dock = DockStyle.Fill;
         rightPanel.Location = new Point(0, 0);
         rightPanel.Name = "rightPanel";
@@ -280,23 +299,6 @@ partial class MainForm
         imagePathLabel.Size = new Size(105, 15);
         imagePathLabel.TabIndex = 1;
         imagePathLabel.Text = "No image selected";
-        // 
-        // btnLaunchSolidoworksAndTestConnection
-        // 
-        btnLaunchSolidoworksAndTestConnection.AutoSize = true;
-        btnLaunchSolidoworksAndTestConnection.BackColor = Color.FromArgb(  255,   128,   128);
-        btnLaunchSolidoworksAndTestConnection.FlatAppearance.BorderSize = 0;
-        btnLaunchSolidoworksAndTestConnection.FlatStyle = FlatStyle.Flat;
-        btnLaunchSolidoworksAndTestConnection.ForeColor = Color.White;
-        btnLaunchSolidoworksAndTestConnection.Location = new Point(10, 567);
-        btnLaunchSolidoworksAndTestConnection.Margin = new Padding(0, 12, 0, 0);
-        btnLaunchSolidoworksAndTestConnection.Name = "btnLaunchSolidoworksAndTestConnection";
-        btnLaunchSolidoworksAndTestConnection.Padding = new Padding(12, 6, 12, 6);
-        btnLaunchSolidoworksAndTestConnection.Size = new Size(212, 33);
-        btnLaunchSolidoworksAndTestConnection.TabIndex = 6;
-        btnLaunchSolidoworksAndTestConnection.Text = "Warm up Solidworks";
-        btnLaunchSolidoworksAndTestConnection.UseVisualStyleBackColor = false;
-        btnLaunchSolidoworksAndTestConnection.Click += btnLaunchSolidoworksAndTestConnection_Click;
         // 
         // attachImageCheckBox
         // 
@@ -354,9 +356,17 @@ partial class MainForm
         demoButton.Padding = new Padding(8, 6, 8, 6);
         demoButton.Size = new Size(212, 37);
         demoButton.TabIndex = 5;
-        demoButton.Text = "Demo: 4-Bar Linkage GA + Parts";
+        demoButton.Text = "Demo:";
         demoButton.UseVisualStyleBackColor = false;
-        demoButton.Click += DemoButton_Click;
+        // 
+        // comboBox1
+        // 
+        comboBox1.Dock = DockStyle.Fill;
+        comboBox1.FormattingEnabled = true;
+        comboBox1.Location = new Point(13, 558);
+        comboBox1.Name = "comboBox1";
+        comboBox1.Size = new Size(206, 23);
+        comboBox1.TabIndex = 6;
         // 
         // inputPanel
         // 
@@ -629,4 +639,5 @@ partial class MainForm
 
     private Label settingsHint;
     private Button btnLaunchSolidoworksAndTestConnection;
+    private ComboBox comboBox1;
 }
