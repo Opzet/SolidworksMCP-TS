@@ -1,5 +1,6 @@
 namespace SolidworksMCP;
 
+using Microsoft.Win32;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -12,6 +13,7 @@ public sealed class SolidWorksApi
 
     private object? swApp;
     private object? currentModel;
+    private string? lastDrawingSourceModelPath;
 
     [DllImport("oleaut32.dll")]
     private static extern int GetActiveObject(ref Guid rclsid, IntPtr reserved, [MarshalAs(UnmanagedType.Interface)] out object? ppunk);
@@ -103,6 +105,7 @@ public sealed class SolidWorksApi
         currentModel = Invoke(swApp!, "OpenDoc6", filePath, docType, 1, string.Empty, errors, warnings) ?? throw new InvalidOperationException($"Failed to open model: {filePath}");
 
         TryInvoke(swApp!, "ActivateDoc2", GetString(currentModel, "GetTitle") ?? string.Empty, false, errors);
+        lastDrawingSourceModelPath = filePath;
 
         return new SolidWorksModel
         {
@@ -125,7 +128,7 @@ public sealed class SolidWorksApi
             return;
         }
 
-        var title = GetString(currentModel, "GetTitle") ?? GetString(currentModel, "GetPathName") ?? "Unknown";
+        var title = GetCurrentModelTitleOrPath();
 
         if (save)
         {
@@ -147,11 +150,32 @@ public sealed class SolidWorksApi
     public SolidWorksModel CreatePart()
     {
         EnsureConnected();
-        currentModel = Invoke(swApp!, "NewPart") ?? TryCreatePartFromTemplate(swApp!);
+
+        List<string> inspectedLocations = [];
+        string? templatePathUsed = null;
+        var templateSource = "solidworks-newpart-default";
+
+        currentModel = Invoke(swApp!, "NewPart");
+        if (currentModel is not null)
+        {
+            templatePathUsed = "<SolidWorks NewPart()>";
+        }
         if (currentModel is null)
         {
-            throw new InvalidOperationException("Failed to create new part - no template available");
+            currentModel = TryCreatePartFromTemplate(swApp!, out inspectedLocations, out templatePathUsed);
+            templateSource = "template-resolution";
         }
+
+        if (currentModel is null)
+        {
+            var inspectedText = inspectedLocations.Count == 0
+                ? "(no template paths were discovered)"
+                : string.Join("; ", inspectedLocations);
+
+            throw new InvalidOperationException($"Failed to create new part - no template available. Configure SOLIDWORKS_PART_TEMPLATE to a valid .prtdot file. Inspected: {inspectedText}");
+        }
+
+        lastDrawingSourceModelPath = null;
 
         return new SolidWorksModel
         {
@@ -159,32 +183,119 @@ public sealed class SolidWorksApi
             Name = Convert.ToString(GetMethodValue(currentModel, "GetTitle")) ?? "Part",
             Type = "Part",
             IsActive = true,
+            TemplatePath = templatePathUsed,
+            TemplateSource = templateSource,
+        };
+    }
+
+    public Dictionary<string, object?> ListPartTemplates()
+    {
+        EnsureConnected();
+
+        var inspectedLocations = new List<string>();
+        var templates = DiscoverPartTemplateCandidates(swApp!, inspectedLocations);
+
+        var templateItems = templates
+            .Select(path => new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["path"] = path,
+                ["name"] = Path.GetFileName(path),
+                ["exists"] = File.Exists(path),
+            })
+            .Cast<object?>()
+            .ToList();
+
+        var defaults = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["defaultPartTemplate"] = Convert.ToString(TryInvoke(swApp!, "GetUserPreferenceStringValue", 13)),
+            ["alternatePartTemplate"] = Convert.ToString(TryInvoke(swApp!, "GetUserPreferenceStringValue", 14)),
+        };
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["templateCount"] = templateItems.Count,
+            ["templates"] = templateItems,
+            ["defaults"] = defaults,
+            ["inspectedLocations"] = inspectedLocations.Distinct(StringComparer.OrdinalIgnoreCase).Cast<object?>().ToList(),
         };
     }
 
     public object CreateSketch(Dictionary<string, object?> parameters)
     {
         EnsureCurrentModel();
-        var plane = parameters.TryGetValue("plane", out var planeValue) ? Convert.ToString(planeValue) : "Front";
-        var featureManager = InvokeProperty(currentModel!, "FeatureManager");
-        var planeRef = featureManager is null ? null : TryInvoke(featureManager, "GetPlane", plane ?? "Front");
-        if (planeRef is not null)
+        var debugTrace = CreateDevelopmentDebugTrace();
+
+        if (currentModel is null)
         {
-            var sketchManager = InvokeProperty(currentModel!, "SketchManager");
-            TryInvoke(sketchManager, "InsertSketch", true);
-            var sketch = GetProperty(sketchManager, "ActiveSketch");
-            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["success"] = true,
-                ["sketchId"] = GetString(sketch, "Name") ?? "Sketch",
+                ["success"] = false,
+                ["error"] = "No active model",
             };
+
+            AddDebugTrace(debugTrace, "EnsureCurrentModel did not resolve an active model.");
+            AttachDebugTrace(result, debugTrace);
+            return result;
         }
 
-        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        var plane = parameters.TryGetValue("plane", out var planeValue) ? Convert.ToString(planeValue) : "Front";
+        AddDebugTrace(debugTrace, $"Requested plane: {plane ?? "Front"}");
+        AddDebugTrace(debugTrace, $"Active model type: {currentModel.GetType().FullName}");
+
+        var sketchManager = InvokeProperty(currentModel, "SketchManager");
+        if (sketchManager is null)
         {
-            ["success"] = false,
-            ["error"] = "Failed to create sketch",
+            var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "SketchManager unavailable",
+            };
+
+            AddDebugTrace(debugTrace, "SketchManager property returned null via COM/reflection.");
+            AttachDebugTrace(result, debugTrace);
+            return result;
+        }
+
+        AddDebugTrace(debugTrace, $"SketchManager type: {sketchManager.GetType().FullName}");
+        TryClearSelection();
+        if (!TrySelectSketchPlane(currentModel, plane, debugTrace))
+        {
+            var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = $"Failed to select sketch plane '{plane ?? "Front"}'",
+            };
+
+            AttachDebugTrace(result, debugTrace);
+            return result;
+        }
+
+        _ = TryInvoke(sketchManager, "InsertSketch", true);
+        AddDebugTrace(debugTrace, "Invoked InsertSketch(true).");
+        var sketch = GetProperty(sketchManager, "ActiveSketch") ?? TryInvoke(sketchManager, "GetActiveSketch2");
+        if (sketch is null)
+        {
+            var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "Failed to create sketch",
+            };
+
+            AddDebugTrace(debugTrace, "ActiveSketch/GetActiveSketch2 both returned null after InsertSketch.");
+            AttachDebugTrace(result, debugTrace);
+            return result;
+        }
+
+        var successResult = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["sketchId"] = GetString(sketch, "Name") ?? "Sketch",
+            ["plane"] = plane ?? "Front",
         };
+
+        AddDebugTrace(debugTrace, $"Sketch created: {GetString(sketch, "Name") ?? "Sketch"}");
+        AttachDebugTrace(successResult, debugTrace);
+        return successResult;
     }
 
     public object AddLine(Dictionary<string, object?> parameters)
@@ -215,6 +326,188 @@ public sealed class SolidWorksApi
         };
     }
 
+    public object AddCircle(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "No active model",
+            };
+        }
+
+        var sketchManager = InvokeProperty(currentModel, "SketchManager");
+        if (sketchManager is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "SketchManager unavailable",
+            };
+        }
+
+        var centerX = GetNumber(parameters, "centerX", 0) / 1000d;
+        var centerY = GetNumber(parameters, "centerY", 0) / 1000d;
+        var centerZ = GetNumber(parameters, "centerZ", 0) / 1000d;
+        var radius = GetNumber(parameters, "radius", 0) / 1000d;
+
+        var circle = TryInvoke(sketchManager, "CreateCircle", centerX, centerY, centerZ, radius)
+            ?? TryInvoke(sketchManager, "CreateCircle", centerX, centerY, centerZ, centerX + radius, centerY, centerZ)
+            ?? TryInvoke(sketchManager, "CreateCircle2", centerX, centerY, centerZ, radius)
+            ?? TryInvoke(sketchManager, "CreateCircleByRadius", centerX, centerY, centerZ, radius);
+
+        return circle is null
+            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "Failed to create circle",
+            }
+            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = true,
+                ["circleId"] = $"circle_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+            };
+    }
+
+    public object AddRectangle(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "No active model",
+            };
+        }
+
+        var sketchManager = InvokeProperty(currentModel, "SketchManager");
+        if (sketchManager is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "SketchManager unavailable",
+            };
+        }
+
+        var x1 = GetNumber(parameters, "x1", 0);
+        var y1 = GetNumber(parameters, "y1", 0);
+        var x2 = GetNumber(parameters, "x2", 100);
+        var y2 = GetNumber(parameters, "y2", 0);
+
+        var rectangle = TryInvoke(sketchManager, "CreateCornerRectangle", x1 / 1000d, y1 / 1000d, 0d, x2 / 1000d, y2 / 1000d, 0d)
+            ?? TryInvoke(sketchManager, "CreateCenterRectangle", ((x1 + x2) / 2d) / 1000d, ((y1 + y2) / 2d) / 1000d, 0d, Math.Abs(x2 - x1) / 1000d, Math.Abs(y2 - y1) / 1000d);
+
+        return rectangle is null
+            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "Failed to create rectangle",
+            }
+            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = true,
+                ["rectangleId"] = $"rect_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+            };
+    }
+
+    public object ExitSketch(bool rebuild)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "No active model",
+            };
+        }
+
+        var sketchManager = InvokeProperty(currentModel, "SketchManager");
+        if (sketchManager is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "SketchManager unavailable",
+            };
+        }
+
+        var activeSketchBeforeExit = GetProperty(sketchManager, "ActiveSketch") ?? TryInvoke(sketchManager, "GetActiveSketch2");
+        var exited = TryInvoke(sketchManager, "InsertSketch", true);
+        var activeSketchAfterExit = GetProperty(sketchManager, "ActiveSketch") ?? TryInvoke(sketchManager, "GetActiveSketch2");
+        var exitSucceeded = exited is bool boolResult
+            ? boolResult
+            : activeSketchBeforeExit is null || activeSketchAfterExit is null;
+        if (!exitSucceeded)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "Failed to exit sketch",
+            };
+        }
+
+        if (rebuild)
+        {
+            _ = TryInvoke(currentModel, "EditRebuild3") ?? TryInvoke(currentModel, "EditRebuild") ?? TryInvoke(currentModel, "ForceRebuild3", false);
+        }
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["message"] = "Exited sketch edit mode",
+        };
+    }
+
+    public object RebuildModel(bool force)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "No model open",
+            };
+        }
+
+        var attempted = new List<string>();
+        var success = false;
+
+        if (force)
+        {
+            success = TryInvokeCommand(currentModel, attempted, "ForceRebuild3", false)
+                || TryInvokeCommand(currentModel, attempted, "ForceRebuild")
+                || TryInvokeCommand(currentModel, attempted, "EditRebuild3")
+                || TryInvokeCommand(currentModel, attempted, "EditRebuild")
+                || TryInvokeCommand(currentModel, attempted, "Rebuild", 1);
+        }
+        else
+        {
+            success = TryInvokeCommand(currentModel, attempted, "EditRebuild3")
+                || TryInvokeCommand(currentModel, attempted, "EditRebuild")
+                || TryInvokeCommand(currentModel, attempted, "Rebuild", 1)
+                || TryInvokeCommand(currentModel, attempted, "ForceRebuild3", false);
+        }
+
+        return success
+            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = true,
+                ["message"] = "Model rebuilt successfully",
+            }
+            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "Rebuild failed",
+                ["attemptedMethods"] = attempted.Cast<object?>().ToList(),
+            };
+    }
+
     public SolidWorksFeature CreateExtrude(double depth, double draft = 0, bool reverse = false)
     {
         _ = draft;
@@ -225,37 +518,78 @@ public sealed class SolidWorksApi
         }
 
         var featureManager = InvokeProperty(currentModel, "FeatureManager") ?? throw new InvalidOperationException("Cannot access FeatureManager");
+        var existingFeatures = CaptureRecentFeatureSignatures(currentModel);
         TryClearSelection();
+        var selectionRecovery = EnsureSketchSelectionForExtrusion(currentModel);
 
         var depthInMeters = depth / 1000d;
         object? feature = null;
+        List<string> attemptedExtrusionMethods = [];
+        List<string> invocationErrors = [];
+        var preconditions = DescribeExtrusionPreconditions(currentModel, depthInMeters, reverse, selectionRecovery);
 
-        try
-        {
-            feature = TryInvoke(featureManager, "FeatureExtrusion", true, reverse, false, 0, 0, depthInMeters, 0, false, false, false, false, 0, 0)
-                ?? TryInvoke(featureManager, "FeatureExtrusion3", true, reverse, false, 0, 0, depthInMeters, 0, false, false, false, false, 0, 0, false, false, false, false, true, false, true, 0, 0, false);
-        }
-        catch
-        {
-            feature = null;
-        }
+        feature = TryInvokeWithDiagnostics(
+                featureManager,
+                attemptedExtrusionMethods,
+                invocationErrors,
+                "FeatureExtrusion",
+                true,
+                reverse,
+                false,
+                0,
+                0,
+                depthInMeters,
+                0,
+                false,
+                false,
+                false,
+                false,
+                0,
+                0)
+            ?? TryInvokeWithDiagnostics(
+                featureManager,
+                attemptedExtrusionMethods,
+                invocationErrors,
+                "FeatureExtrusion3",
+                true,
+                reverse,
+                false,
+                0,
+                0,
+                depthInMeters,
+                0,
+                false,
+                false,
+                false,
+                false,
+                0,
+                0,
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+                true,
+                0,
+                0,
+                false);
 
         if (feature is null)
         {
-            feature = ExecuteExtrusionViaMacro(depthInMeters, reverse);
+            ExecuteExtrusionViaMacro(depthInMeters, reverse);
         }
 
-        if (feature is null)
+        var recentFeatures = EnumerateRecentFeatures(currentModel);
+        var resolvedFeature = ResolveCreatedExtrusionFeature(currentModel, feature, existingFeatures, recentFeatures);
+        if (resolvedFeature is null)
         {
-            throw new InvalidOperationException("Failed to create extrusion - feature is null");
+            throw new InvalidOperationException($"Failed to resolve created extrusion feature. Preconditions: {preconditions}. Attempted methods: {string.Join(", ", attemptedExtrusionMethods)}. Invocation errors: {DescribeInvocationErrors(invocationErrors)}. Candidates after extrusion: {DescribeFeatures(recentFeatures)}. Direct return: {DescribeFeature(feature)}");
         }
 
-        var featureName = GetString(feature, "Name") ?? Convert.ToString(GetMethodValue(feature, "GetName")) ?? "Boss-Extrude1";
+        var featureName = GetFeatureName(resolvedFeature) ?? "Boss-Extrude1";
         TryClearSelection();
-        if (TryInvoke(currentModel, "EditRebuild3") is null)
-        {
-            _ = TryInvoke(currentModel, "EditRebuild");
-        }
+        _ = RebuildModel(force: false);
 
         return new SolidWorksFeature
         {
@@ -359,34 +693,19 @@ public sealed class SolidWorksApi
             throw new InvalidOperationException("No model open");
         }
 
-        var currentPath = GetString(currentModel, "GetPathName");
-        if (string.IsNullOrWhiteSpace(currentPath))
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        var resolvedFormat = NormalizeExportFormat(format, filePath);
+        _ = EnsureModelPathForInterop(currentModel, "export-source-model");
+
+        var documentType = GetSolidWorksDocumentType(currentModel);
+        if (resolvedFormat == "pdf" && documentType != 3)
         {
-            var docType = Convert.ToInt32(GetMethodValue(currentModel, "GetType") ?? 0);
-            var ext = docType switch
-            {
-                1 => ".SLDPRT",
-                2 => ".SLDASM",
-                _ => ".SLDDRW",
-            };
-            var tempPath = Path.ChangeExtension(filePath, ext);
-            TryInvoke(currentModel, "SaveAs3", tempPath, 0, 1);
+            throw new InvalidOperationException("PDF export is only supported for drawing documents.");
         }
 
-        var extName = format.ToLowerInvariant();
-        var success = extName switch
+        if (!TrySaveDocument(currentModel, filePath, 2))
         {
-            "step" or "stp" => TryInvoke(currentModel, "SaveAs3", filePath, 0, 2) is true || TryInvoke(InvokeProperty(currentModel, "Extension"), "SaveAs", filePath, 0, 2, null, 0, 0) is true,
-            "iges" or "igs" => TryInvoke(currentModel, "SaveAs3", filePath, 0, 2) is true || TryInvoke(InvokeProperty(currentModel, "Extension"), "SaveAs", filePath, 0, 2, null, 0, 0) is true,
-            "stl" => TryInvoke(currentModel, "SaveAs3", filePath, 0, 2) is true || TryInvoke(currentModel, "SaveAs4", filePath, 0, 2, 0, 0) is true || TryInvoke(InvokeProperty(currentModel, "Extension"), "SaveAs", filePath, 0, 2, null, 0, 0) is true,
-            "pdf" => Convert.ToInt32(GetMethodValue(currentModel, "GetType") ?? 0) == 3 && (TryInvoke(currentModel, "SaveAs3", filePath, 0, 2) is true || TryInvoke(InvokeProperty(currentModel, "Extension"), "SaveAs", filePath, 0, 2, null, 0, 0) is true),
-            "dxf" or "dwg" => TryInvoke(currentModel, "SaveAs3", filePath, 0, 2) is true || TryInvoke(InvokeProperty(currentModel, "Extension"), "SaveAs", filePath, 0, 2, null, 0, 0) is true,
-            _ => throw new InvalidOperationException($"Unsupported export format: {format}"),
-        };
-
-        if (!success)
-        {
-            throw new InvalidOperationException($"Failed to export to {format.ToUpperInvariant()}: Export returned false");
+            throw new InvalidOperationException($"Failed to export to {resolvedFormat.ToUpperInvariant()}: Export returned false");
         }
     }
 
@@ -454,6 +773,129 @@ public sealed class SolidWorksApi
     {
         EnsureCurrentModel();
         return currentModel;
+    }
+
+    public string GetCurrentModelTitleOrPath()
+    {
+        EnsureCurrentModel();
+        return GetString(currentModel, "GetTitle") ?? GetString(currentModel, "GetPathName") ?? "Unknown";
+    }
+
+    public string? GetCurrentModelPath()
+    {
+        EnsureCurrentModel();
+        return GetString(currentModel, "GetPathName");
+    }
+
+    public object CreateDrawingFromCurrentModel(string? templatePath)
+    {
+        EnsureConnected();
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "No model open to create drawing from",
+            };
+        }
+
+        var sourceModel = currentModel;
+        var sourceModelPath = EnsureModelPathForInterop(sourceModel, "drawing-source-model");
+        var resolvedTemplatePath = ResolveDrawingTemplatePath(templatePath);
+        var (drawing, error) = TryCreateDocumentFromTemplate(swApp!, resolvedTemplatePath ?? string.Empty);
+        if (drawing is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = $"Cannot create drawing with template: {resolvedTemplatePath ?? templatePath ?? string.Empty}",
+                ["details"] = error,
+            };
+        }
+
+        currentModel = drawing;
+        lastDrawingSourceModelPath = sourceModelPath;
+
+        List<string> warnings = [];
+        TryAddStandardViews(drawing, sourceModelPath, warnings);
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["drawingName"] = GetString(drawing, "GetTitle") ?? "Drawing",
+            ["templatePath"] = resolvedTemplatePath ?? "<SolidWorks default>",
+            ["sourceModelPath"] = sourceModelPath,
+            ["warnings"] = warnings.Cast<object?>().ToList(),
+            ["message"] = warnings.Count == 0
+                ? "Created new drawing from current model"
+                : $"Created new drawing from current model with warnings: {string.Join("; ", warnings)}",
+        };
+    }
+
+    public object AddDrawingView(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "Current document must be a drawing",
+            };
+        }
+
+        var modelPath = GetResolvedDrawingModelPath(parameters);
+        if (string.IsNullOrWhiteSpace(modelPath))
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "Model path is unavailable. Save the source model or create the drawing from a model first.",
+            };
+        }
+
+        Dictionary<string, string> orientationMap = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["front"] = "*Front",
+            ["top"] = "*Top",
+            ["right"] = "*Right",
+            ["back"] = "*Back",
+            ["bottom"] = "*Bottom",
+            ["left"] = "*Left",
+            ["iso"] = "*Isometric",
+            ["current"] = "*Current",
+        };
+
+        var viewType = parameters.TryGetValue("viewType", out var viewTypeValue) && !string.IsNullOrWhiteSpace(Convert.ToString(viewTypeValue))
+            ? Convert.ToString(viewTypeValue)!
+            : "front";
+        var viewName = orientationMap.TryGetValue(viewType, out var mapped) ? mapped : "*Front";
+        var view = TryInvoke(currentModel, "CreateDrawViewFromModelView3", modelPath, viewName, GetNumber(parameters, "x", 0) / 1000d, GetNumber(parameters, "y", 0) / 1000d, 0d);
+        if (view is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "Failed to create view",
+                ["modelPath"] = modelPath,
+                ["viewType"] = viewType,
+            };
+        }
+
+        var scale = GetNumber(parameters, "scale", 1);
+        if (scale > 0)
+        {
+            SetProperty(view, "ScaleDecimal", scale);
+        }
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["viewType"] = viewType,
+            ["modelPath"] = modelPath,
+            ["message"] = $"Added {viewType} view at ({GetNumber(parameters, "x", 0)}, {GetNumber(parameters, "y", 0)})",
+        };
     }
 
     public object? GetApp() => swApp;
@@ -621,61 +1063,594 @@ public sealed class SolidWorksApi
         return false;
     }
 
-    private static object? TryCreatePartFromTemplate(object swApplication)
+    private static object? TryCreatePartFromTemplate(object swApplication, out List<string> inspectedLocations, out string? templatePathUsed)
     {
         ArgumentNullException.ThrowIfNull(swApplication);
 
-        var templateCandidates = new List<string>();
+        templatePathUsed = null;
+        inspectedLocations = new List<string>();
+        var templateCandidates = DiscoverPartTemplateCandidates(swApplication, inspectedLocations);
 
-        var envTemplate = Environment.GetEnvironmentVariable("SOLIDWORKS_PART_TEMPLATE");
+        foreach (var templatePath in templateCandidates)
+        {
+            var expandedTemplatePath = Environment.ExpandEnvironmentVariables(templatePath);
+
+            if (string.IsNullOrWhiteSpace(expandedTemplatePath))
+            {
+                continue;
+            }
+
+            var (created, error) = TryCreateDocumentFromTemplate(swApplication, expandedTemplatePath);
+            if (created is not null)
+            {
+                templatePathUsed = expandedTemplatePath;
+                return created;
+            }
+
+            var existsState = File.Exists(expandedTemplatePath) ? "exists" : "missing";
+            var errorSuffix = string.IsNullOrWhiteSpace(error) ? string.Empty : $" (error: {error})";
+            inspectedLocations.Add($"<template failed to open ({existsState})> {expandedTemplatePath}{errorSuffix}");
+        }
+
+        inspectedLocations.Add("<SolidWorks default template via NewDocument(\"\")>");
+        var (fallback, fallbackError) = TryCreateDocumentFromTemplate(swApplication, string.Empty);
+        if (fallback is not null)
+        {
+            templatePathUsed = "<SolidWorks default template via NewDocument(\"\")>";
+        }
+        else if (!string.IsNullOrWhiteSpace(fallbackError))
+        {
+            inspectedLocations.Add($"<SolidWorks default template failed> {fallbackError}");
+        }
+
+        return fallback;
+    }
+
+    private static List<string> DiscoverPartTemplateCandidates(object swApplication, List<string> inspectedLocations)
+    {
+        return DiscoverTemplateCandidates(
+            swApplication,
+            inspectedLocations,
+            "SOLIDWORKS_PART_TEMPLATE",
+            TryGetPartDocumentTemplate,
+            [13, 14],
+            ".prtdot");
+    }
+
+    private string? ResolveDrawingTemplatePath(string? templatePath)
+    {
+        if (!string.IsNullOrWhiteSpace(templatePath))
+        {
+            return templatePath;
+        }
+
+        if (swApp is null)
+        {
+            return null;
+        }
+
+        List<string> inspectedLocations = [];
+        return DiscoverDrawingTemplateCandidates(swApp, inspectedLocations).FirstOrDefault();
+    }
+
+    private static List<string> DiscoverDrawingTemplateCandidates(object swApplication, List<string> inspectedLocations)
+    {
+        return DiscoverTemplateCandidates(
+            swApplication,
+            inspectedLocations,
+            "SOLIDWORKS_DRAWING_TEMPLATE",
+            TryGetDrawingDocumentTemplate,
+            [15],
+            ".drwdot");
+    }
+
+    private static List<string> DiscoverTemplateCandidates(object swApplication, List<string> inspectedLocations, string environmentVariableName, Func<object, string?> preferredTemplateResolver, IReadOnlyList<int> preferenceIds, string extension)
+    {
+        List<string> templateCandidates = [];
+
+        var envTemplate = Environment.GetEnvironmentVariable(environmentVariableName);
         if (!string.IsNullOrWhiteSpace(envTemplate))
         {
             templateCandidates.Add(envTemplate);
+            inspectedLocations.Add(envTemplate);
         }
 
-        var commonTemplateRoots = new[]
+        var preferredTemplate = preferredTemplateResolver(swApplication);
+        if (!string.IsNullOrWhiteSpace(preferredTemplate))
         {
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "SOLIDWORKS", "SOLIDWORKS 2024", "templates"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "SOLIDWORKS", "SOLIDWORKS 2023", "templates"),
+            templateCandidates.Add(preferredTemplate);
+            inspectedLocations.Add($"<SolidWorks preferred template> {preferredTemplate}");
+        }
+
+        foreach (var preferenceId in preferenceIds)
+        {
+            var preferenceTemplate = Convert.ToString(TryInvoke(swApplication, "GetUserPreferenceStringValue", preferenceId));
+            if (!string.IsNullOrWhiteSpace(preferenceTemplate))
+            {
+                templateCandidates.Add(preferenceTemplate);
+                inspectedLocations.Add(preferenceTemplate);
+            }
+        }
+
+        foreach (var root in GetCommonTemplateRoots())
+        {
+            AddTemplatesFromPath(root, templateCandidates, inspectedLocations, extension);
+        }
+
+        foreach (var root in GetTemplateRootsFromRegistry(inspectedLocations))
+        {
+            AddTemplatesFromPath(root, templateCandidates, inspectedLocations, extension);
+        }
+
+        return templateCandidates
+            .Select(path => path?.Trim().Trim('"'))
+            .Where(path => !string.IsNullOrWhiteSpace(path) && path.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static IEnumerable<string> GetCommonTemplateRoots()
+    {
+        var versionCandidates = Enumerable.Range(DateTime.UtcNow.Year - 8, 10)
+            .Select(year => $"SOLIDWORKS {year}")
+            .Reverse()
+            .ToArray();
+
+        var roots = new List<string>
+        {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SOLIDWORKS", "templates"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SOLIDWORKS", "lang", "english", "tutorial", "templates"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "SOLIDWORKS", "templates"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "SOLIDWORKS", "lang", "english", "tutorial", "templates"),
         };
 
-        foreach (var root in commonTemplateRoots.Where(Directory.Exists))
+        foreach (var version in versionCandidates)
         {
-            try
+            roots.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "SOLIDWORKS", version, "templates"));
+            roots.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SOLIDWORKS", version, "templates"));
+        }
+
+        return roots.Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static IEnumerable<string> GetTemplateRootsFromRegistry(List<string> inspectedLocations)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return [];
+        }
+
+        var discovered = new List<string>();
+
+        using var solidWorksKey = Registry.CurrentUser.OpenSubKey(@"Software\SolidWorks");
+        if (solidWorksKey is null)
+        {
+            return discovered;
+        }
+
+        foreach (var versionKeyName in solidWorksKey.GetSubKeyNames())
+        {
+            if (!versionKeyName.StartsWith("SOLIDWORKS", StringComparison.OrdinalIgnoreCase))
             {
-                var candidate = Directory.EnumerateFiles(root, "*.prtdot", SearchOption.TopDirectoryOnly).FirstOrDefault();
-                if (!string.IsNullOrWhiteSpace(candidate))
+                continue;
+            }
+
+            using var versionKey = solidWorksKey.OpenSubKey(versionKeyName);
+            if (versionKey is null)
+            {
+                continue;
+            }
+
+            CollectTemplateValuesFromRegistry(versionKey, $"HKCU\\Software\\SolidWorks\\{versionKeyName}", discovered, inspectedLocations, maxDepth: 4);
+        }
+
+        return discovered.Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void CollectTemplateValuesFromRegistry(RegistryKey key, string keyPath, List<string> discovered, List<string> inspectedLocations, int maxDepth)
+    {
+        foreach (var valueName in key.GetValueNames())
+        {
+            var raw = key.GetValue(valueName);
+            foreach (var token in ExpandRegistryValueToPaths(raw))
+            {
+                var hasTemplateHint = valueName.IndexOf("template", StringComparison.OrdinalIgnoreCase) >= 0
+                    || token.IndexOf("template", StringComparison.OrdinalIgnoreCase) >= 0
+                    || token.EndsWith(".prtdot", StringComparison.OrdinalIgnoreCase);
+
+                if (!hasTemplateHint)
                 {
-                    templateCandidates.Add(candidate);
+                    continue;
                 }
-            }
-            catch
-            {
-                // ignore inaccessible template folders
+
+                inspectedLocations.Add($"{keyPath}::{valueName}={token}");
+                discovered.Add(token);
             }
         }
 
-        foreach (var templatePath in templateCandidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        if (maxDepth <= 0)
         {
-            var created = TryInvoke(swApplication, "NewDocument", templatePath, 0, 0d, 0d);
-            if (created is not null)
-            {
-                return created;
-            }
+            return;
         }
 
-        var defaultTemplate = Convert.ToString(TryInvoke(swApplication, "GetUserPreferenceStringValue", 13));
-        if (!string.IsNullOrWhiteSpace(defaultTemplate))
+        foreach (var subKeyName in key.GetSubKeyNames())
         {
-            var created = TryInvoke(swApplication, "NewDocument", defaultTemplate, 0, 0d, 0d);
-            if (created is not null)
+            using var subKey = key.OpenSubKey(subKeyName);
+            if (subKey is null)
             {
-                return created;
+                continue;
+            }
+
+            CollectTemplateValuesFromRegistry(subKey, $"{keyPath}\\{subKeyName}", discovered, inspectedLocations, maxDepth - 1);
+        }
+    }
+
+    private static IEnumerable<string> ExpandRegistryValueToPaths(object? registryValue)
+    {
+        if (registryValue is null)
+        {
+            return [];
+        }
+
+        if (registryValue is string single)
+        {
+            return SplitPathTokens(Environment.ExpandEnvironmentVariables(single));
+        }
+
+        if (registryValue is string[] multi)
+        {
+            var results = new List<string>();
+            foreach (var value in multi)
+            {
+                results.AddRange(SplitPathTokens(Environment.ExpandEnvironmentVariables(value)));
+            }
+
+            return results;
+        }
+
+        return [];
+    }
+
+    private static IEnumerable<string> SplitPathTokens(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return [];
+        }
+
+        if ((value.StartsWith("\\\\", StringComparison.Ordinal) || value.Contains(":\\", StringComparison.Ordinal))
+            && (value.EndsWith(".prtdot", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".asmdot", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".drwdot", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".slddrt", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".sldbomtbt", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".sldwldtbt", StringComparison.OrdinalIgnoreCase)
+                || value.EndsWith(".sldtbt", StringComparison.OrdinalIgnoreCase)))
+        {
+            return [value];
+        }
+
+        return value
+            .Split([';', '|'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(token => !string.IsNullOrWhiteSpace(token));
+    }
+
+    private static string? TryGetPartDocumentTemplate(object swApplication)
+    {
+        var attempts = new object?[]
+        {
+            TryInvoke(swApplication, "GetDocumentTemplate", 1, 0, 0d, 0d),
+            TryInvoke(swApplication, "GetDocumentTemplate", 1, string.Empty, 0, 0d, 0d),
+            TryInvoke(swApplication, "GetDocumentTemplate", 1, string.Empty, 0, 0, 0),
+            TryInvoke(swApplication, "GetTemplatePathName", 1, 0, 0d, 0d),
+            TryInvoke(swApplication, "GetTemplatePathName", 1),
+        };
+
+        foreach (var attempt in attempts)
+        {
+            var candidate = Convert.ToString(attempt);
+            if (!string.IsNullOrWhiteSpace(candidate) && candidate.EndsWith(".prtdot", StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
             }
         }
 
-        return TryInvoke(swApplication, "NewDocument", string.Empty, 0, 0d, 0d);
+        return null;
+    }
+
+    private static string? TryGetDrawingDocumentTemplate(object swApplication)
+    {
+        var attempts = new object?[]
+        {
+            TryInvoke(swApplication, "GetDocumentTemplate", 3, 0, 0d, 0d),
+            TryInvoke(swApplication, "GetDocumentTemplate", 3, string.Empty, 0, 0d, 0d),
+            TryInvoke(swApplication, "GetDocumentTemplate", 3, string.Empty, 0, 0, 0),
+            TryInvoke(swApplication, "GetTemplatePathName", 3, 0, 0d, 0d),
+            TryInvoke(swApplication, "GetTemplatePathName", 3),
+        };
+
+        foreach (var attempt in attempts)
+        {
+            var candidate = Convert.ToString(attempt);
+            if (!string.IsNullOrWhiteSpace(candidate) && candidate.EndsWith(".drwdot", StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private string GetResolvedDrawingModelPath(Dictionary<string, object?> parameters)
+    {
+        if (parameters.TryGetValue("modelPath", out var explicitPathValue) && !string.IsNullOrWhiteSpace(Convert.ToString(explicitPathValue)))
+        {
+            return Convert.ToString(explicitPathValue)!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(lastDrawingSourceModelPath))
+        {
+            return lastDrawingSourceModelPath;
+        }
+
+        return GetCurrentModelPath() ?? string.Empty;
+    }
+
+    private string EnsureModelPathForInterop(object model, string fallbackName)
+    {
+        var modelPath = GetString(model, "GetPathName");
+        if (!string.IsNullOrWhiteSpace(modelPath))
+        {
+            return modelPath;
+        }
+
+        var directory = Path.Combine(Path.GetTempPath(), "solidworks-mcp-models");
+        Directory.CreateDirectory(directory);
+
+        var documentType = GetSolidWorksDocumentType(model);
+        var extension = documentType switch
+        {
+            2 => ".sldasm",
+            3 => ".slddrw",
+            _ => ".sldprt",
+        };
+
+        var title = GetString(model, "GetTitle") ?? fallbackName;
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var safeTitle = new string(title.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray());
+        var tempPath = Path.Combine(directory, $"{safeTitle}_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}{extension}");
+        if (!TrySaveDocument(model, tempPath, 1))
+        {
+            throw new InvalidOperationException($"Model must be saved before this operation can continue. Temporary save failed for {safeTitle}.");
+        }
+
+        return tempPath;
+    }
+
+    private static void TryAddStandardViews(object drawing, string modelPath, List<string> warnings)
+    {
+        try
+        {
+            var firstView = TryInvoke(drawing, "CreateDrawViewFromModelView3", modelPath, "*Front", 0.15d, 0.15d, 0d);
+            if (firstView is null)
+            {
+                warnings.Add("Failed to create front view - drawing is empty");
+            }
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"View creation error: {ex.Message}");
+        }
+    }
+
+    private static (object? Document, string? Error) TryCreateDocumentFromTemplate(object swApplication, string templatePath)
+    {
+        var errors = 0;
+        var warnings = 0;
+
+        try
+        {
+            var attemptErrors = new List<string>();
+            foreach (var openTemplate in BuildTemplateOpenCandidates(templatePath))
+            {
+                AppLogger.Debug("Template open attempt started", new { templatePath, openTemplate, exists = File.Exists(openTemplate) });
+
+                if (TryInvoke(swApplication, "NewDocument", openTemplate, 0, 0d, 0d) is { } createdByNewDocument)
+                {
+                    AppLogger.Info("Template open succeeded via NewDocument", new { openTemplate });
+                    return (createdByNewDocument, null);
+                }
+
+                if (TryInvoke(swApplication, "INewDocument2", openTemplate, 0, 0d, 0d) is { } createdByINewDocument2)
+                {
+                    AppLogger.Info("Template open succeeded via INewDocument2", new { openTemplate });
+                    return (createdByINewDocument2, null);
+                }
+
+                if (TryInvoke(swApplication, "NewDoc6", openTemplate, 0, 0d, 0d, errors, warnings) is { } createdByNewDoc6)
+                {
+                    AppLogger.Info("Template open succeeded via NewDoc6", new { openTemplate, errors, warnings });
+                    return (createdByNewDoc6, null);
+                }
+
+                if (TryInvoke(swApplication, "OpenDoc6", openTemplate, 1, 1, string.Empty, errors, warnings) is { } createdByOpenDoc6)
+                {
+                    AppLogger.Info("Template open succeeded via OpenDoc6", new { openTemplate, errors, warnings });
+                    return (createdByOpenDoc6, null);
+                }
+
+                var appError = ReadSolidWorksAppError(swApplication);
+                attemptErrors.Add($"openTemplate={openTemplate}, exists={File.Exists(openTemplate)}, errors={errors}, warnings={warnings}, appError={appError}");
+                AppLogger.Warn("Template open attempt failed", new { openTemplate, errors, warnings, appError });
+            }
+
+            var appErrorSummary = ReadSolidWorksAppError(swApplication);
+            var details = new List<string>(attemptErrors)
+            {
+                $"finalAppError={appErrorSummary}",
+            };
+
+            return (null, details.Count == 0 ? "SolidWorks returned null document." : string.Join(", ", details));
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Template open processing threw exception", ex.Message);
+            return (null, ex.Message);
+        }
+    }
+
+    private static IEnumerable<string> BuildTemplateOpenCandidates(string templatePath)
+    {
+        var candidates = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(templatePath))
+        {
+            candidates.Add(string.Empty);
+            return candidates;
+        }
+
+        var normalized = Environment.ExpandEnvironmentVariables(templatePath).Trim().Trim('"');
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            candidates.Add(normalized);
+        }
+
+        var resolvedUnc = ResolveUncPath(normalized);
+        if (!string.IsNullOrWhiteSpace(resolvedUnc) && !string.Equals(resolvedUnc, normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            candidates.Add(resolvedUnc);
+            candidates.Add($"\"{resolvedUnc}\"");
+        }
+
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string ReadSolidWorksAppError(object swApplication)
+    {
+        var details = new List<string>();
+        var appType = swApplication.GetType();
+
+        try
+        {
+            var getLastError = appType.GetMethod("GetLastError");
+            var getErrorMsg = appType.GetMethod("GetErrorCodeString") ?? appType.GetMethod("GetErrorString");
+            var lastCode = getLastError?.Invoke(swApplication, null);
+            var lastText = lastCode is null ? null : getErrorMsg?.Invoke(swApplication, [lastCode]);
+
+            if (lastCode is not null)
+            {
+                details.Add($"code={lastCode}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(Convert.ToString(lastText)))
+            {
+                details.Add($"message={lastText}");
+            }
+        }
+        catch
+        {
+            details.Add("errorReader=unavailable");
+        }
+
+        try
+        {
+            var rev = TryInvoke(swApplication, "RevisionNumber");
+            if (rev is not null)
+            {
+                details.Add($"revision={rev}");
+            }
+        }
+        catch
+        {
+        }
+
+        return details.Count == 0 ? "none" : string.Join("|", details);
+    }
+
+    private static string? ResolveUncPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || path.Length < 2 || path[1] != ':')
+        {
+            return null;
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        try
+        {
+            var drive = path[..2];
+            var psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c net use {drive}",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                return null;
+            }
+
+            var output = process.StandardOutput.ReadToEnd();
+            _ = process.StandardError.ReadToEnd();
+            process.WaitForExit(2000);
+
+            var unc = output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .FirstOrDefault(line => line.StartsWith("\\\\", StringComparison.Ordinal));
+
+            if (string.IsNullOrWhiteSpace(unc))
+            {
+                return null;
+            }
+
+            return Path.Combine(unc.TrimEnd('\\'), path[2..].TrimStart('\\'));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void AddTemplatesFromPath(string path, List<string> templateCandidates, List<string> inspectedLocations, string extension)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        inspectedLocations.Add(path);
+
+        if (path.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+        {
+            templateCandidates.Add(path);
+            return;
+        }
+
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var template in Directory.EnumerateFiles(path, $"*{extension}", SearchOption.TopDirectoryOnly))
+            {
+                templateCandidates.Add(template);
+            }
+        }
+        catch
+        {
+            // ignore inaccessible template folders
+        }
     }
 
     private static int GetDocumentType(string filePath)
@@ -687,6 +1662,42 @@ public sealed class SolidWorksApi
             ".slddrw" => 3,
             _ => 1,
         };
+    }
+
+    private static string NormalizeExportFormat(string? format, string filePath)
+    {
+        var resolvedFormat = string.IsNullOrWhiteSpace(format)
+            ? Path.GetExtension(filePath).TrimStart('.')
+            : format;
+
+        resolvedFormat = resolvedFormat.ToLowerInvariant();
+        return resolvedFormat switch
+        {
+            "stp" => "step",
+            "igs" => "iges",
+            _ when resolvedFormat is "step" or "iges" or "stl" or "pdf" or "dxf" or "dwg" => resolvedFormat,
+            _ => throw new InvalidOperationException($"Unsupported export format: {format ?? Path.GetExtension(filePath)}"),
+        };
+    }
+
+    private static int GetSolidWorksDocumentType(object model)
+    {
+        var documentTypeValue = GetProperty(model, "GetType") ?? TryInvoke(model, "GetType");
+        if (documentTypeValue is not null && int.TryParse(Convert.ToString(documentTypeValue), out var documentType))
+        {
+            return documentType;
+        }
+
+        var path = GetString(model, "GetPathName");
+        return string.IsNullOrWhiteSpace(path) ? 1 : GetDocumentType(path);
+    }
+
+    private static bool TrySaveDocument(object model, string filePath, int options)
+    {
+        var extension = GetProperty(model, "Extension");
+        return TryInvoke(model, "SaveAs3", filePath, 0, options) is true
+            || TryInvoke(model, "SaveAs4", filePath, 0, options, 0, 0) is true
+            || TryInvoke(extension, "SaveAs", filePath, 0, options, null, 0, 0) is true;
     }
 
     private void EnsureConnected()
@@ -750,10 +1761,24 @@ public sealed class SolidWorksApi
 
     private object? ResolveDimension(string name)
     {
+        foreach (var candidate in EnumerateDimensionNameCandidates(name))
+        {
+            var value = TryResolveDimensionByName(candidate);
+            if (value is not null)
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private object? TryResolveDimensionByName(string dimensionName)
+    {
         var methods = new[] { "Parameter", "GetParameter" };
         foreach (var method in methods)
         {
-            var value = TryInvoke(currentModel!, method, name);
+            var value = TryInvoke(currentModel!, method, dimensionName);
             if (value is not null)
             {
                 return value;
@@ -761,29 +1786,66 @@ public sealed class SolidWorksApi
         }
 
         var extension = InvokeProperty(currentModel!, "Extension");
-        if (extension is not null)
+        if (extension is null)
         {
-            var value = TryInvoke(extension, "GetParameter", name);
-            if (value is not null)
-            {
-                return value;
-            }
-
-            var selected = TryInvoke(extension, "SelectByID2", name, "DIMENSION", 0, 0, 0, false, 0, null, 0);
-            if (selected is true)
-            {
-                var selectionManager = InvokeProperty(currentModel!, "SelectionManager");
-                if (selectionManager is not null && Convert.ToInt32(GetMethodValue(selectionManager, "GetSelectedObjectCount") ?? 0) > 0)
-                {
-                    return TryInvoke(selectionManager, "GetSelectedObject6", 1, -1);
-                }
-            }
+            return null;
         }
 
-        return null;
+        var parameter = TryInvoke(extension, "GetParameter", dimensionName);
+        if (parameter is not null)
+        {
+            return parameter;
+        }
+
+        var selected = TryInvoke(extension, "SelectByID2", dimensionName, "DIMENSION", 0, 0, 0, false, 0, null, 0);
+        if (selected is not bool succeeded || !succeeded)
+        {
+            return null;
+        }
+
+        var selectionManager = InvokeProperty(currentModel!, "SelectionManager");
+        if (selectionManager is null || Convert.ToInt32(GetMethodValue(selectionManager, "GetSelectedObjectCount") ?? 0) <= 0)
+        {
+            return null;
+        }
+
+        return TryInvoke(selectionManager, "GetSelectedObject6", 1, -1);
     }
 
-    private object? ExecuteExtrusionViaMacro(double depthInMeters, bool reverse)
+    private IEnumerable<string> EnumerateDimensionNameCandidates(string name)
+    {
+        yield return name;
+
+        if (!name.Contains('@', StringComparison.Ordinal))
+        {
+            yield break;
+        }
+
+        var docTitle = GetCurrentModelTitleOrPath();
+        if (!string.IsNullOrWhiteSpace(docTitle) && !string.Equals(docTitle, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return $"{name}@{docTitle}";
+            yield return $"{name}@{Path.GetFileName(docTitle)}";
+            yield return $"{name}@{Path.GetFileNameWithoutExtension(docTitle)}";
+        }
+
+        var ownerSeparator = name.IndexOf('@');
+        if (ownerSeparator <= 0 || ownerSeparator >= name.Length - 1)
+        {
+            yield break;
+        }
+
+        var dimensionId = name[..ownerSeparator];
+        var ownerName = name[(ownerSeparator + 1)..];
+        if (!dimensionId.StartsWith("D", StringComparison.OrdinalIgnoreCase))
+        {
+            yield break;
+        }
+
+        yield return $"RD{dimensionId[1..]}@{ownerName}";
+    }
+
+    private void ExecuteExtrusionViaMacro(double depthInMeters, bool reverse)
     {
         var macroDir = Path.Combine(Path.GetTempPath(), "solidworks-mcp-macros");
         var macroPath = Path.Combine(macroDir, $"extrusion_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.swp");
@@ -844,8 +1906,7 @@ End Sub
         try
         {
             File.WriteAllText(macroPath, vbaCode);
-            TryInvoke(swApp!, "RunMacro2", macroPath, "Module1", "CreateExtrusion", 1, 0);
-            return TryInvoke(currentModel!, "FeatureByPositionReverse", 0);
+            _ = TryInvoke(swApp!, "RunMacro2", macroPath, "Module1", "CreateExtrusion", 1, 0);
         }
         finally
         {
@@ -862,6 +1923,278 @@ End Sub
         }
     }
 
+    private static HashSet<string> CaptureRecentFeatureSignatures(object model)
+        => EnumerateRecentFeatures(model).Select(GetFeatureSignature).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static object? ResolveCreatedExtrusionFeature(object model, object? feature, HashSet<string> existingFeatures, IReadOnlyList<object>? recentFeatures = null)
+    {
+        if (IsExtrusionFeature(feature))
+        {
+            return feature;
+        }
+
+        recentFeatures ??= EnumerateRecentFeatures(model);
+
+        if (TryResolveFeatureFromReturnedObject(feature) is { } resolvedFromReturnedObject)
+        {
+            return resolvedFromReturnedObject;
+        }
+
+        object? latestExtrusion = null;
+        object? latestCreatedSolidFeature = null;
+        foreach (var candidate in recentFeatures)
+        {
+            if (IsExtrusionFeature(candidate))
+            {
+                latestExtrusion ??= candidate;
+                if (!existingFeatures.Contains(GetFeatureSignature(candidate)))
+                {
+                    return candidate;
+                }
+
+                continue;
+            }
+
+            if (latestCreatedSolidFeature is null
+                && !IsSketchFeature(candidate)
+                && !IsReferenceFeature(candidate)
+                && !existingFeatures.Contains(GetFeatureSignature(candidate)))
+            {
+                latestCreatedSolidFeature = candidate;
+            }
+        }
+
+        return latestExtrusion
+            ?? latestCreatedSolidFeature
+            ?? recentFeatures.FirstOrDefault(candidate => IsExtrusionFeature(candidate) && !IsReferenceFeature(candidate));
+    }
+
+    private static object? TryResolveFeatureFromReturnedObject(object? feature)
+    {
+        if (feature is null)
+        {
+            return null;
+        }
+
+        if (IsExtrusionFeature(feature))
+        {
+            return feature;
+        }
+
+        var specificFeature = TryInvoke(feature, "GetSpecificFeature2");
+        if (IsExtrusionFeature(specificFeature))
+        {
+            return specificFeature;
+        }
+
+        var nextFeature = TryInvoke(feature, "GetNextFeature") ?? TryInvoke(feature, "IGetNextFeature");
+        if (IsExtrusionFeature(nextFeature))
+        {
+            return nextFeature;
+        }
+
+        return null;
+    }
+
+    private static string EnsureSketchSelectionForExtrusion(object model)
+    {
+        if (GetSelectedObjectCount(model) > 0)
+        {
+            return "selection already available";
+        }
+
+        var activeSketch = GetActiveSketch(model);
+        if (TrySelectSketchForExtrusion(model, activeSketch))
+        {
+            return $"selected active sketch {DescribeFeature(activeSketch)}";
+        }
+
+        var recentSketch = EnumerateRecentFeatures(model).FirstOrDefault(IsSketchFeature);
+        if (TrySelectSketchForExtrusion(model, recentSketch))
+        {
+            return $"selected recent sketch {DescribeFeature(recentSketch)}";
+        }
+
+        return "unable to restore sketch selection";
+    }
+
+    private static int GetSelectedObjectCount(object model)
+    {
+        var selectionManager = GetProperty(model, "SelectionManager");
+        return selectionManager is null
+            ? 0
+            : Convert.ToInt32(TryInvoke(selectionManager, "GetSelectedObjectCount2", -1)
+                ?? GetMethodValue(selectionManager, "GetSelectedObjectCount")
+                ?? 0);
+    }
+
+    private static object? GetActiveSketch(object model)
+    {
+        var sketchManager = GetProperty(model, "SketchManager");
+        return sketchManager is null
+            ? null
+            : GetProperty(sketchManager, "ActiveSketch") ?? TryInvoke(sketchManager, "GetActiveSketch2");
+    }
+
+    private static bool TrySelectSketchForExtrusion(object model, object? sketch)
+    {
+        if (TrySelectFeatureLikeObject(sketch))
+        {
+            return true;
+        }
+
+        var sketchName = GetFeatureName(sketch) ?? GetString(sketch, "Name");
+        if (string.IsNullOrWhiteSpace(sketchName))
+        {
+            return false;
+        }
+
+        var namedFeature = TryInvoke(model, "FeatureByName", sketchName);
+        if (TrySelectFeatureLikeObject(namedFeature))
+        {
+            return true;
+        }
+
+        var extension = GetProperty(model, "Extension");
+        var selected = extension is null
+            ? null
+            : TryInvoke(extension, "SelectByID2", sketchName, "SKETCH", 0d, 0d, 0d, false, 0, null, 0);
+
+        return selected is bool succeeded && succeeded;
+    }
+
+    private static bool TrySelectFeatureLikeObject(object? candidate)
+    {
+        if (candidate is null)
+        {
+            return false;
+        }
+
+        var selected = TryInvoke(candidate, "Select2", false, 0)
+            ?? TryInvoke(candidate, "Select4", false, null)
+            ?? TryInvoke(candidate, "Select", false);
+
+        return selected is bool succeeded && succeeded;
+    }
+
+    private static string DescribeExtrusionPreconditions(object model, double depthInMeters, bool reverse, string selectionRecovery)
+    {
+        var selectionCount = GetSelectedObjectCount(model);
+        var activeSketch = GetActiveSketch(model);
+        var documentTitle = GetString(model, "GetTitle") ?? "Unknown";
+        var documentType = GetSolidWorksDocumentType(model);
+        return $"doc={documentTitle}; docType={documentType}; depthMeters={depthInMeters}; reverse={reverse}; selectionCount={selectionCount}; activeSketch={DescribeFeature(activeSketch)}; selectionRecovery={selectionRecovery}";
+    }
+
+    private static string DescribeInvocationErrors(IReadOnlyList<string> errors)
+        => errors.Count == 0 ? "<none>" : string.Join(" | ", errors.Distinct(StringComparer.Ordinal));
+
+    private static string DescribeFeatures(IEnumerable<object> features)
+        => string.Join(", ", features.Select(DescribeFeature));
+
+    private static string DescribeFeature(object? feature)
+    {
+        if (feature is null)
+        {
+            return "<null>";
+        }
+
+        return $"{GetFeatureName(feature) ?? "<unnamed>"}|{Convert.ToString(GetMethodValue(feature, "GetTypeName2")) ?? "<unknown>"}";
+    }
+
+    private static bool IsReferenceFeature(object? feature)
+    {
+        if (feature is null)
+        {
+            return true;
+        }
+
+        var typeName = Convert.ToString(GetMethodValue(feature, "GetTypeName2")) ?? string.Empty;
+        if (typeName.Contains("RefPlane", StringComparison.OrdinalIgnoreCase)
+            || typeName.Contains("Origin", StringComparison.OrdinalIgnoreCase)
+            || typeName.Contains("CoordSys", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var featureName = GetFeatureName(feature) ?? string.Empty;
+        return featureName.Equals("Origin", StringComparison.OrdinalIgnoreCase)
+            || featureName.EndsWith(" Plane", StringComparison.OrdinalIgnoreCase)
+            || featureName.Equals("Annotations", StringComparison.OrdinalIgnoreCase)
+            || featureName.Equals("History", StringComparison.OrdinalIgnoreCase)
+            || featureName.Equals("Sensors", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyList<object> EnumerateRecentFeatures(object model, int maxFeatures = 25)
+    {
+        List<object> features = [];
+        var featureCountValue = TryInvoke(model, "GetFeatureCount");
+        if (featureCountValue is not null && int.TryParse(Convert.ToString(featureCountValue), out var featureCount) && featureCount > 0)
+        {
+            for (var index = 0; index < Math.Min(featureCount, maxFeatures); index++)
+            {
+                var feature = TryInvoke(model, "FeatureByPositionReverse", index);
+                if (feature is not null)
+                {
+                    features.Add(feature);
+                }
+            }
+        }
+
+        if (features.Count > 0)
+        {
+            return features;
+        }
+
+        var current = TryInvoke(model, "FirstFeature") ?? TryInvoke(model, "IFirstFeature");
+        while (current is not null && features.Count < maxFeatures)
+        {
+            features.Add(current);
+            current = TryInvoke(current, "GetNextFeature") ?? TryInvoke(current, "IGetNextFeature");
+        }
+
+        features.Reverse();
+        return features;
+    }
+
+    private static bool IsExtrusionFeature(object? feature)
+    {
+        if (feature is null)
+        {
+            return false;
+        }
+
+        var typeName = Convert.ToString(GetMethodValue(feature, "GetTypeName2")) ?? string.Empty;
+        if (IsSketchType(typeName))
+        {
+            return false;
+        }
+
+        if (typeName.Contains("Extrud", StringComparison.OrdinalIgnoreCase)
+            || typeName.Contains("Boss", StringComparison.OrdinalIgnoreCase)
+            || typeName.Contains("BaseBody", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var featureName = GetFeatureName(feature) ?? string.Empty;
+        return featureName.Contains("Extrude", StringComparison.OrdinalIgnoreCase)
+            || featureName.Contains("Boss-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSketchFeature(object? feature)
+        => feature is not null && IsSketchType(Convert.ToString(GetMethodValue(feature, "GetTypeName2")) ?? string.Empty);
+
+    private static bool IsSketchType(string typeName)
+        => typeName.Equals("ProfileFeature", StringComparison.OrdinalIgnoreCase)
+            || typeName.Contains("Sketch", StringComparison.OrdinalIgnoreCase);
+
+    private static string GetFeatureSignature(object feature)
+        => $"{GetFeatureName(feature) ?? string.Empty}|{Convert.ToString(GetMethodValue(feature, "GetTypeName2")) ?? string.Empty}";
+
+    private static string? GetFeatureName(object? feature)
+        => GetString(feature, "Name") ?? Convert.ToString(GetMethodValue(feature, "GetName"));
+
     private static object? GetProperty(object? target, string propertyName)
     {
         if (target is null)
@@ -871,7 +2204,27 @@ End Sub
 
         var type = target.GetType();
         var property = type.GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
-        return property?.GetValue(target);
+        if (property is not null)
+        {
+            return property.GetValue(target);
+        }
+
+        try
+        {
+            return type.InvokeMember(propertyName, BindingFlags.GetProperty | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase, null, target, null);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return type.InvokeMember($"get_{propertyName}", BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase, null, target, null);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void SetProperty(object target, string propertyName, object? value)
@@ -884,7 +2237,7 @@ End Sub
         }
     }
 
-    private object? InvokeProperty(object target, string propertyName)
+    private static object? InvokeProperty(object target, string propertyName)
         => GetProperty(target, propertyName);
 
     private static object? Invoke(object target, string methodName, params object?[] args)
@@ -892,31 +2245,146 @@ End Sub
         return TryInvoke(target, methodName, args);
     }
 
-    private static object? TryInvoke(object? target, string methodName, params object?[] args)
+    private static bool TryInvokeCommand(object target, List<string> attempted, string methodName, params object?[] args)
     {
+        attempted.Add(methodName);
+        return TryInvokeMember(target, methodName, out var result, args)
+            && (result is not bool boolResult || boolResult);
+    }
+
+    private static object? TryInvokeWithDiagnostics(object? target, List<string> attempted, List<string> errors, string methodName, params object?[] args)
+    {
+        attempted.Add(methodName);
+        return TryInvokeMember(target, methodName, out var result, errors, args) ? result : null;
+    }
+
+    private static object? TryInvoke(object? target, string methodName, params object?[] args)
+        => TryInvokeMember(target, methodName, out var result, args) ? result : null;
+
+    private static bool TryInvokeMember(object? target, string methodName, out object? result, params object?[] args)
+    {
+        List<string> ignoredErrors = [];
+        return TryInvokeMember(target, methodName, out result, ignoredErrors, args);
+    }
+
+    private static bool TryInvokeMember(object? target, string methodName, out object? result, List<string> errors, params object?[] args)
+    {
+        result = null;
         if (target is null)
         {
-            return null;
+            return false;
+        }
+
+        var targetType = target.GetType();
+
+        var candidateMethods = targetType
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase)
+            .Where(method => string.Equals(method.Name, methodName, StringComparison.OrdinalIgnoreCase))
+            .Select(method => new { Method = method, Score = GetMethodScore(method, args) })
+            .Where(item => item.Score >= 0)
+            .OrderByDescending(item => item.Score)
+            .Select(item => item.Method)
+            .ToArray();
+
+        foreach (var method in candidateMethods)
+        {
+            try
+            {
+                result = method.Invoke(target, args);
+                return true;
+            }
+            catch (TargetInvocationException ex)
+            {
+                var message = ex.InnerException?.Message ?? ex.Message;
+                errors.Add($"{method.Name}({string.Join(", ", method.GetParameters().Select(parameter => parameter.ParameterType.Name))}) => {message}");
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{method.Name}({string.Join(", ", method.GetParameters().Select(parameter => parameter.ParameterType.Name))}) => {ex.Message}");
+            }
+        }
+
+        if (methodName is "FeatureManager" or "SketchManager" or "Extension" or "SelectionManager" or "ActiveDoc")
+        {
+            return false;
         }
 
         try
         {
-            var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
-            if (method is not null)
+            result = targetType.InvokeMember(methodName, BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase, null, target, args);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"late-bound {methodName} => {ex.Message}");
+            return false;
+        }
+    }
+
+    private static int GetMethodScore(MethodInfo method, object?[] args)
+    {
+        var parameters = method.GetParameters();
+        if (parameters.Length != args.Length)
+        {
+            return -1;
+        }
+
+        var score = 0;
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameterType = parameters[index].ParameterType;
+            if (parameterType.IsByRef)
             {
-                return method.Invoke(target, args);
+                parameterType = parameterType.GetElementType() ?? parameterType;
             }
 
-            dynamic dynamicTarget = target;
-            return methodName switch
+            var argument = args[index];
+            if (argument is null)
             {
-                "FeatureManager" or "SketchManager" or "Extension" or "SelectionManager" or "ActiveDoc" => null,
-                _ => dynamicTarget.GetType().InvokeMember(methodName, BindingFlags.InvokeMethod | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase, null, target, args),
-            };
+                if (parameterType.IsValueType && Nullable.GetUnderlyingType(parameterType) is null)
+                {
+                    return -1;
+                }
+
+                score += 1;
+                continue;
+            }
+
+            var argumentType = argument.GetType();
+            if (parameterType.IsAssignableFrom(argumentType))
+            {
+                score += 3;
+                continue;
+            }
+
+            if (CanConvertArgument(argument, parameterType))
+            {
+                score += 2;
+                continue;
+            }
+
+            return -1;
+        }
+
+        return score;
+    }
+
+    private static bool CanConvertArgument(object argument, Type destinationType)
+    {
+        try
+        {
+            if (destinationType.IsEnum)
+            {
+                _ = Enum.ToObject(destinationType, argument);
+                return true;
+            }
+
+            _ = Convert.ChangeType(argument, destinationType);
+            return true;
         }
         catch
         {
-            return null;
+            return false;
         }
     }
 
@@ -993,6 +2461,182 @@ End Sub
         catch
         {
         }
+    }
+
+    private static List<string>? CreateDevelopmentDebugTrace()
+    {
+#if DEBUG
+        return new List<string>();
+#else
+        return null;
+#endif
+    }
+
+    [Conditional("DEBUG")]
+    private static void AddDebugTrace(List<string>? debugTrace, string message)
+    {
+        if (debugTrace is null)
+        {
+            return;
+        }
+
+        debugTrace.Add(message);
+    }
+
+    [Conditional("DEBUG")]
+    private static void AttachDebugTrace(Dictionary<string, object?> result, List<string>? debugTrace)
+    {
+        if (debugTrace is null || debugTrace.Count == 0)
+        {
+            return;
+        }
+
+        result["debug"] = debugTrace.Cast<object?>().ToList();
+    }
+
+    private bool TrySelectSketchPlane(object model, string? plane, List<string>? debugTrace)
+    {
+        var normalizedPlane = NormalizePrimaryPlaneName(plane);
+        AddDebugTrace(debugTrace, $"Normalized plane: {normalizedPlane}");
+
+        var candidates = EnumeratePlaneNameCandidates(normalizedPlane).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        AddDebugTrace(debugTrace, $"Plane candidates: {string.Join(", ", candidates)}");
+
+        foreach (var candidate in candidates)
+        {
+            var feature = TryInvoke(model, "FeatureByName", candidate);
+            AddDebugTrace(debugTrace, $"FeatureByName('{candidate}') => {(feature is null ? "null" : feature.GetType().FullName)}");
+            if (TrySelectResolvedPlane(feature, candidate, debugTrace))
+            {
+                return true;
+            }
+        }
+
+        var recentFeatures = EnumerateRecentFeatures(model);
+        AddDebugTrace(debugTrace, $"Recent feature enumeration count: {recentFeatures.Count}");
+        foreach (var feature in recentFeatures)
+        {
+            var featureName = GetFeatureName(feature);
+            if (string.IsNullOrWhiteSpace(featureName) || !candidates.Contains(featureName, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            AddDebugTrace(debugTrace, $"Recent feature match: '{featureName}'.");
+            if (TrySelectResolvedPlane(feature, featureName, debugTrace))
+            {
+                return true;
+            }
+        }
+
+        var extension = GetProperty(model, "Extension");
+        if (extension is not null)
+        {
+            AddDebugTrace(debugTrace, $"Model extension type: {extension.GetType().FullName}");
+            foreach (var candidate in candidates)
+            {
+                var selected = TryInvoke(extension, "SelectByID2", candidate, "PLANE", 0d, 0d, 0d, false, 0, null, 0);
+                AddDebugTrace(debugTrace, $"SelectByID2('{candidate}', 'PLANE') => {FormatDebugValue(selected)}");
+                if (selected is bool succeeded && succeeded)
+                {
+                    return true;
+                }
+            }
+        }
+        else
+        {
+            AddDebugTrace(debugTrace, "Model extension is null.");
+        }
+
+        var featureManager = GetProperty(model, "FeatureManager");
+        if (featureManager is null)
+        {
+            AddDebugTrace(debugTrace, "FeatureManager is null.");
+            return false;
+        }
+
+        AddDebugTrace(debugTrace, $"FeatureManager type: {featureManager.GetType().FullName}");
+
+        foreach (var candidate in candidates)
+        {
+            var planeRef = TryInvoke(featureManager, "GetPlane", candidate);
+            AddDebugTrace(debugTrace, $"GetPlane('{candidate}') => {(planeRef is null ? "null" : planeRef.GetType().FullName)}");
+            if (planeRef is null)
+            {
+                continue;
+            }
+
+            if (TrySelectResolvedPlane(planeRef, candidate, debugTrace))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TrySelectResolvedPlane(object? planeRef, string candidate, List<string>? debugTrace)
+    {
+        if (planeRef is null)
+        {
+            return false;
+        }
+
+        var selected = TryInvoke(planeRef, "Select2", false, 0)
+            ?? TryInvoke(planeRef, "Select4", false, null)
+            ?? TryInvoke(planeRef, "Select", false);
+
+        AddDebugTrace(debugTrace, $"Plane.Select('{candidate}') => {FormatDebugValue(selected)}");
+        if (selected is bool succeeded && succeeded)
+        {
+            return true;
+        }
+
+        var specificPlane = TryInvoke(planeRef, "GetSpecificFeature2");
+        AddDebugTrace(debugTrace, $"GetSpecificFeature2('{candidate}') => {(specificPlane is null ? "null" : specificPlane.GetType().FullName)}");
+        if (specificPlane is null)
+        {
+            return false;
+        }
+
+        selected = TryInvoke(specificPlane, "Select2", false, 0)
+            ?? TryInvoke(specificPlane, "Select4", false, null)
+            ?? TryInvoke(specificPlane, "Select", false);
+
+        AddDebugTrace(debugTrace, $"SpecificPlane.Select('{candidate}') => {FormatDebugValue(selected)}");
+        return selected is bool specificSelected && specificSelected;
+    }
+
+    private static string FormatDebugValue(object? value)
+        => value is null ? "null" : Convert.ToString(value) ?? value.GetType().FullName ?? string.Empty;
+
+    private static string NormalizePrimaryPlaneName(string? plane)
+    {
+        if (string.IsNullOrWhiteSpace(plane))
+        {
+            return "Front Plane";
+        }
+
+        return plane.Trim() switch
+        {
+            "Front" => "Front Plane",
+            "Top" => "Top Plane",
+            "Right" => "Right Plane",
+            _ => plane.Trim(),
+        };
+    }
+
+    private static IEnumerable<string> EnumeratePlaneNameCandidates(string normalizedPlane)
+    {
+        yield return normalizedPlane;
+
+        if (normalizedPlane.EndsWith(" Plane", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return normalizedPlane[..^6];
+            yield break;
+        }
+
+        yield return normalizedPlane + " Plane";
     }
 
     private void TryClearSelection()

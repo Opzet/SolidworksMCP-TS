@@ -9,6 +9,10 @@ public sealed record SolidWorksModel
     public required string Type { get; init; }
 
     public bool IsActive { get; init; }
+
+    public string? TemplatePath { get; init; }
+
+    public string? TemplateSource { get; init; }
 }
 
 public sealed record SolidWorksFeature

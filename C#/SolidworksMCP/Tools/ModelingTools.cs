@@ -8,6 +8,7 @@ public static class ModelingTools
     [
         new McpToolDefinition("open_model", "Open a SolidWorks part, assembly, or drawing file", JsonSchemaBuilder.ObjectWithRequired(["path"], ("path", JsonSchemaBuilder.String("Full path to the SolidWorks file"))), HandleOpenModel),
         new McpToolDefinition("create_part", "Create a new SolidWorks part document", JsonSchemaBuilder.Object(), HandleCreatePart),
+        new McpToolDefinition("list_part_templates", "List available part templates from SolidWorks defaults/settings and registry-backed locations", JsonSchemaBuilder.Object(), HandleListPartTemplates),
         new McpToolDefinition("launch_solidworks_and_check_connection", "Launch SolidWorks if needed, reuse existing instance, and bring it to front", JsonSchemaBuilder.Object(), HandleLaunchSolidWorksAndCheckConnection),
         new McpToolDefinition("close_model", "Close the current model with option to save", JsonSchemaBuilder.Object(("save", JsonSchemaBuilder.Boolean("Save before closing", false))), HandleCloseModel),
         new McpToolDefinition("create_extrusion", "Create an extrusion feature", JsonSchemaBuilder.ObjectWithRequired(["depth"], ("depth", JsonSchemaBuilder.Number("Extrusion depth in mm")), ("draft", JsonSchemaBuilder.Number("Draft angle in degrees", 0)), ("reverse", JsonSchemaBuilder.Boolean("Reverse direction", false))), HandleCreateExtrusion),
@@ -38,7 +39,16 @@ public static class ModelingTools
         try
         {
             var model = api.CreatePart();
-            return ValueTask.FromResult<object?>(ToolHelpers.SuccessText($"Created new part: {model.Name}"));
+            var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["message"] = $"Created new part: {model.Name}",
+                ["name"] = model.Name,
+                ["type"] = model.Type,
+                ["templatePath"] = model.TemplatePath ?? "<SolidWorks default>",
+                ["templateSource"] = model.TemplateSource ?? "unknown",
+            };
+
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(result));
         }
         catch (Exception ex)
         {
@@ -62,6 +72,22 @@ public static class ModelingTools
         }
     }
 
+    private static ValueTask<object?> HandleListPartTemplates(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = arguments;
+        _ = cancellationToken;
+
+        try
+        {
+            var templates = api.ListPartTemplates();
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(templates));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to list part templates: {ex.Message}"));
+        }
+    }
+
     private static ValueTask<object?> HandleCloseModel(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
     {
         _ = cancellationToken;
@@ -74,9 +100,7 @@ public static class ModelingTools
                 return ValueTask.FromResult<object?>(ToolHelpers.SuccessText("No active model to close"));
             }
 
-            var title = currentModel.GetType().GetMethod("GetTitle")?.Invoke(currentModel, [])?.ToString()
-                ?? currentModel.GetType().GetMethod("GetPathName")?.Invoke(currentModel, [])?.ToString()
-                ?? "Unknown";
+            var title = api.GetCurrentModelTitleOrPath();
 
             api.CloseModel(ToolHelpers.GetBool(args, "save"));
             return ValueTask.FromResult<object?>(ToolHelpers.SuccessText($"Model \"{title}\" closed successfully"));
@@ -138,33 +162,8 @@ public static class ModelingTools
         var args = ToolHelpers.ToArguments(arguments);
         try
         {
-            var model = api.GetCurrentModel() ?? throw new InvalidOperationException("No model open");
-            var force = ToolHelpers.GetBool(args, "force");
-            var success = false;
-
-            if (force)
-            {
-                success = model.GetType().GetMethod("ForceRebuild3")?.Invoke(model, [false]) as bool? ?? false;
-                if (!success)
-                {
-                    success = model.GetType().GetMethod("ForceRebuild")?.Invoke(model, []) is not null || model.GetType().GetMethod("EditRebuild")?.Invoke(model, []) is not null;
-                }
-            }
-            else
-            {
-                success = model.GetType().GetMethod("EditRebuild")?.Invoke(model, []) is not null;
-                if (!success)
-                {
-                    success = model.GetType().GetMethod("Rebuild")?.Invoke(model, [1]) is not null;
-                }
-            }
-
-            if (!success)
-            {
-                throw new InvalidOperationException("Rebuild failed");
-            }
-
-            return ValueTask.FromResult<object?>(ToolHelpers.SuccessText("Model rebuilt successfully"));
+            var result = api.RebuildModel(ToolHelpers.GetBool(args, "force"));
+            return ValueTask.FromResult<object?>(result);
         }
         catch (Exception ex)
         {

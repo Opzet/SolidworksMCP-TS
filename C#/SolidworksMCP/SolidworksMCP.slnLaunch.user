@@ -1,0 +1,17 @@
+[
+  {
+    "Name": "New Profile",
+    "Projects": [
+      {
+        "Path": "..\\SolidworksChatClient\\SolidworksChatClient.csproj",
+        "Action": "Start",
+        "DebugTarget": "SolidworksChatClient"
+      },
+      {
+        "Path": "SolidworksMCP.csproj",
+        "Action": "Start",
+        "DebugTarget": "SolidworksMCP"
+      }
+    ]
+  }
+]

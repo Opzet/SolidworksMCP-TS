@@ -7,4 +7,35 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SolidworksMCP\SolidworksMCP.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <McpExeName>SolidworksMCP.exe</McpExeName>
+    <McpSourceDirectory>$(MSBuildProjectDirectory)\..\SolidworksMCP\bin\$(Configuration)\net9.0\</McpSourceDirectory>
+  </PropertyGroup>
+
+  <Target Name="CopyMcpRuntimeToOutput" AfterTargets="Build">
+    <ItemGroup>
+      <McpRuntimeFiles Include="$(McpSourceDirectory)*" Condition="Exists('$(McpSourceDirectory)')" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(McpRuntimeFiles)"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true"
+          Condition="@(McpRuntimeFiles) != ''" />
+  </Target>
+
+  <Target Name="CopyMcpRuntimeToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <McpRuntimeFiles Include="$(McpSourceDirectory)*" Condition="Exists('$(McpSourceDirectory)')" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(McpRuntimeFiles)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="@(McpRuntimeFiles) != ''" />
+  </Target>
 </Project>

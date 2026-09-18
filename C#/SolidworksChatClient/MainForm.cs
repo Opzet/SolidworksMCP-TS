@@ -3,12 +3,23 @@ namespace SolidworksChatClient;
 using SolidworksChatClient.Runtime;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 
 public partial class MainForm : Form
 {
+    private static readonly JsonSerializerOptions PrettyJsonOptions = new( )
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     private ChatRuntime? runtime;
     private string? selectedImagePath;
     private bool connecting;
+    private bool hasPendingPlanApproval;
+    private bool isPlanApproved;
+    private CancellationTokenSource? currentOperationCts;
     private int planWaitStart = -1;
     private int planWaitLength;
 
@@ -20,8 +31,10 @@ public partial class MainForm : Form
         inputBox.PlaceholderText = "Describe the SolidWorks task, then press Enter to send...";
 
         MainForm_Resize(this, EventArgs.Empty);
+        UpdatePlanActionButtons( );
+        settingsHint.Text = $"MCP executable path: {GetDefaultMcpCommandPath( )}";
         AppendLog("system", "Open Settings, connect, and the client will validate Ollama + MCP before chat starts.");
-        AppendLog("system", "Tip: Enter sends message, Shift+Enter adds a new line.");
+        AppendLog("system", "Tip: Enter sends message, Shift+Enter adds a new line. Type /new to start a fresh chat.");
     }
 
     private async void ConnectButton_Click(object? sender, EventArgs e) => await ConnectAsync( ).ConfigureAwait(true);
@@ -31,6 +44,54 @@ public partial class MainForm : Form
     private async void DecodeImageButton_Click(object? sender, EventArgs e) => await SendImageDecodePromptAsync( ).ConfigureAwait(true);
 
     private async void DemoButton_Click(object? sender, EventArgs e) => await SendFourBarDemoPromptAsync( ).ConfigureAwait(true);
+
+    private void StopButton_Click(object? sender, EventArgs e)
+    {
+        var operation = currentOperationCts;
+        if (operation is not null)
+        {
+
+            operation.Cancel( );
+            AppendLog("system", "Stop requested. Cancelling current activity...");
+            statusLabel.Text = "Status: stopping...";
+        }
+
+        StartNewChat( );
+    }
+
+    private void ApprovePlanButton_Click(object? sender, EventArgs e)
+    {
+        if (!hasPendingPlanApproval || isPlanApproved)
+        {
+            return;
+        }
+
+        isPlanApproved = true;
+        AppendLog("system", "Plan approved. Click Execute to run MCP actions.");
+        UpdatePlanActionButtons( );
+    }
+
+    private void RejectPlanButton_Click(object? sender, EventArgs e)
+    {
+        RejectPendingPlan("Plan rejected. Send an updated request when ready.");
+    }
+
+    private async void ExecutePlanButton_Click(object? sender, EventArgs e)
+    {
+        if (!hasPendingPlanApproval)
+        {
+            return;
+        }
+
+        try
+        {
+            await ExecuteApprovedPlanAsync( ).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            AppendLog("error", ex.Message);
+        }
+    }
 
     private async void InputBox_KeyDown(object? sender, KeyEventArgs e)
     {
@@ -63,13 +124,15 @@ public partial class MainForm : Form
         }
 
         connecting = true;
+        var operation = BeginOperation( );
         ToggleUi(false);
         statusLabel.Text = "Status: connecting...";
 
         try
         {
+            var cancellationToken = operation.Token;
             var configuredModel = modelBox.Text.Trim( );
-            var ollamaStatus = await OllamaClient.TestConnectionAsync(ollamaUrlBox.Text.Trim( ), configuredModel).ConfigureAwait(true);
+            var ollamaStatus = await OllamaClient.TestConnectionAsync(ollamaUrlBox.Text.Trim( ), configuredModel, cancellationToken).ConfigureAwait(true);
             AppendLog("system", $"Ollama reachable. Discovered {ollamaStatus.AvailableModelCount} model(s).");
 
             if (!ollamaStatus.IsModelAvailable)
@@ -77,25 +140,54 @@ public partial class MainForm : Form
                 AppendLog("error", $"Configured model '{configuredModel}' is not in Ollama tags. Continue only after pull/update.");
             }
 
+            var mcpCommand = GetDefaultMcpCommandPath( );
+            if (!File.Exists(mcpCommand))
+            {
+                throw new FileNotFoundException($"MCP executable was not found: {mcpCommand}");
+            }
+
+#if DEBUG
+            if (Debugger.IsAttached && runtime is not null)
+            {
+                var reusedMcpStatus = await runtime.TestMcpConnectionAsync(cancellationToken).ConfigureAwait(true);
+                AppendLog("system", $"Reusing existing MCP runtime. {reusedMcpStatus.ToolCount} tool(s) available.");
+                AppendLog("plan", $"Tool catalog: {FormatToolList(reusedMcpStatus.ToolNames)}");
+
+                var reusedSolidWorksStatus = await runtime.WarmupSolidWorksAsync(cancellationToken).ConfigureAwait(true);
+                AppendLog(reusedSolidWorksStatus.Succeeded ? "system" : "error", reusedSolidWorksStatus.Message);
+
+                statusLabel.Text = reusedSolidWorksStatus.Succeeded
+                    ? "Status: connected + SolidWorks ready"
+                    : "Status: connected (SolidWorks warm-up skipped/failed)";
+
+                return;
+            }
+#endif
+
             runtime?.Dispose( );
             runtime = new ChatRuntime(new ChatSettings(
                 ollamaUrlBox.Text.Trim( ),
                 configuredModel,
-                mcpCommandBox.Text.Trim( ),
+                mcpCommand,
                 SplitCommandLine(mcpArgsBox.Text.Trim( ))));
 
-            await runtime.InitializeAsync( ).ConfigureAwait(true);
+            await runtime.InitializeAsync(cancellationToken).ConfigureAwait(true);
 
-            var mcpStatus = await runtime.TestMcpConnectionAsync( ).ConfigureAwait(true);
+            var mcpStatus = await runtime.TestMcpConnectionAsync(cancellationToken).ConfigureAwait(true);
             AppendLog("system", $"MCP connected. {mcpStatus.ToolCount} tool(s) available.");
             AppendLog("plan", $"Tool catalog: {FormatToolList(mcpStatus.ToolNames)}");
 
-            var solidWorksStatus = await runtime.WarmupSolidWorksAsync( ).ConfigureAwait(true);
+            var solidWorksStatus = await runtime.WarmupSolidWorksAsync(cancellationToken).ConfigureAwait(true);
             AppendLog(solidWorksStatus.Succeeded ? "system" : "error", solidWorksStatus.Message);
 
             statusLabel.Text = solidWorksStatus.Succeeded
                 ? "Status: connected + SolidWorks ready"
                 : "Status: connected (SolidWorks warm-up skipped/failed)";
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("system", "Connection activity cancelled.");
+            statusLabel.Text = "Status: cancelled";
         }
         catch (Exception ex)
         {
@@ -108,6 +200,7 @@ public partial class MainForm : Form
         {
             connecting = false;
             ToggleUi(true);
+            EndOperation(operation);
         }
     }
 
@@ -119,7 +212,40 @@ public partial class MainForm : Form
             return;
         }
 
+        if (text.Equals("/new", StringComparison.OrdinalIgnoreCase))
+        {
+            inputBox.Text = string.Empty;
+            StartNewChat( );
+            return;
+        }
+
+        if (hasPendingPlanApproval)
+        {
+            if (await TryHandlePendingPlanCommandAsync(text).ConfigureAwait(true))
+            {
+                inputBox.Text = string.Empty;
+                return;
+            }
+
+            RejectPendingPlan("Previous plan discarded. Drafting a new plan from your updated request...");
+        }
+
         await SendPromptAsync(text).ConfigureAwait(true);
+    }
+
+    private void StartNewChat()
+    {
+        if (runtime is null)
+        {
+            AppendLog("system", "Not connected. Connect first, then use /new to reset chat context.");
+            return;
+        }
+
+        runtime.ResetConversation( );
+        hasPendingPlanApproval = false;
+        isPlanApproved = false;
+        UpdatePlanActionButtons( );
+        AppendLog("system", "Started a new chat. Previous plan and conversation context were cleared.");
     }
 
     private async Task SendImageDecodePromptAsync()
@@ -136,7 +262,40 @@ public partial class MainForm : Form
 
     private async Task SendFourBarDemoPromptAsync()
     {
-        const string demoPrompt = "Create a complete 4-bar linkage demo using available MCP tools only. Steps: 1) create a new part and sketch linkage plates with holes, 2) extrude features, 3) set key dimensions, 4) rebuild model, 5) create drawing from model, 6) add front and isometric views, 7) summarize generated artifacts and remaining manual CAD steps if any.";
+        //const string demoPrompt = "Create a complete 4-bar linkage demo using available MCP tools only. Steps: 1) create a new part and sketch linkage plates with holes, 2) extrude features, 3) set key dimensions, 4) rebuild model, 5) create drawing from model, 6) add front and isometric views, 7) summarize generated artifacts and remaining manual CAD steps if any.";
+
+        const string demoPrompt = @"
+                                    CAD 4-bar linkage parts and align in assemblky using only the available MCP tools.
+                                    
+                                    Objective:
+
+                                    Build a fully defined parametric 4-bar linkage model, generate the required CAD parts and assembly files and provide a concise summary of the results.
+                                    List missing or desired mcp tools that would be needed to fully automate the 4-bar linkage creation process.
+                                    
+                                    Workflow:
+                                    1. Create ground link, crank, coupler, and rocker CAD parts for 4-bar linkage assembly
+                                    2. Sketch each linkage components (ground link, crank, coupler, and rocker), including all required hole locations.
+                                    3. Apply geometric constraints and dimensions to fully define each sketch.
+                                    4. Extrude the sketches into solid bodies with appropriate feature names.
+                                    5. Set and document the critical linkage dimensions (link lengths, hole diameters, plate thicknesses, and center-to-center distances).
+                                    6. Rebuild/regenerate the model and verify that all features are successfully created without errors.
+                                    7. Save all solidworks parts with relevant names.
+                                    
+                                    8. Create a drawing based on the completed model.
+                                    9. Insert at minimum:
+                                    - One front view
+                                    - One isometric view
+                                    10. Ensure drawing views are properly scaled and updated.
+                                    
+                                    Final Output:
+                                    - List every generated artifact (part files, drawings, etc.).
+                                    - Report the final dimensions used in the model.
+                                    - Confirm whether the model and drawing were created successfully.
+                                    - Identify any steps that could not be completed through MCP tools alone.
+                                    - Provide any remaining manual CAD actions required to achieve a production-ready model.
+                                    
+                                    ";
+
         await SendPromptAsync(demoPrompt).ConfigureAwait(true);
     }
 
@@ -148,49 +307,70 @@ public partial class MainForm : Form
             return;
         }
 
+        var operation = BeginOperation( );
         ToggleUi(false);
         inputBox.Text = string.Empty;
         AppendLog("you", prompt);
         BeginPlanWaitLine( );
 
-        using var waitCounterCancellation = new CancellationTokenSource( );
+        using var waitCounterCancellation = CancellationTokenSource.CreateLinkedTokenSource(operation.Token);
         var waitCounterTask = RunPlanWaitCounterAsync(waitCounterCancellation.Token);
 
         try
         {
             var imageBase64 = attachImageCheckBox.Checked && !string.IsNullOrWhiteSpace(selectedImagePath) && File.Exists(selectedImagePath)
-                ? Convert.ToBase64String(await File.ReadAllBytesAsync(selectedImagePath).ConfigureAwait(true))
+                ? Convert.ToBase64String(await File.ReadAllBytesAsync(selectedImagePath, operation.Token).ConfigureAwait(true))
                 : null;
 
-            var result = await runtime.SendAsync(prompt, imageBase64).ConfigureAwait(true);
+            var planProposal = await runtime.ProposePlanAsync(prompt, imageBase64, operation.Token).ConfigureAwait(true);
+
+            if (!planProposal.RequiresApproval)
+            {
+                waitCounterCancellation.Cancel( );
+                await waitCounterTask.ConfigureAwait(true);
+                CompletePlanWaitLine( );
+                AppendLog("plan", "Assistant completed planning and returned a final response.");
+                AppendLog("assistant", planProposal.PlanSummary);
+                AppendPlanDiagnostics(planProposal);
+                AppendLog("system", "No executable tool calls were detected. Ask for 'MCP tool calls only' or refine your request.");
+                return;
+            }
 
             waitCounterCancellation.Cancel( );
             await waitCounterTask.ConfigureAwait(true);
             CompletePlanWaitLine( );
 
-            foreach (var progressUpdate in result.ProgressUpdates)
+            AppendLog("plan", $"Proposed plan: {planProposal.PlanSummary}");
+            AppendLog("plan", $"Plan diagnostics: source={planProposal.ParseSource}; toolCount={planProposal.PlannedToolCalls.Count}");
+            AppendPlanDiagnostics(planProposal);
+            foreach (var plannedCall in planProposal.PlannedToolCalls)
             {
-                AppendLog("plan", progressUpdate);
+                AppendLog("plan", $"proposed> {plannedCall.Name} [source={plannedCall.Source}]{Environment.NewLine}{FormatHumanReadableJson(plannedCall.Arguments)}");
             }
 
-            AppendLog("assistant", result.FinalResponse);
-
-            foreach (var toolCall in result.ToolCalls)
-            {
-                AppendLog("tool", $"> {toolCall.Name}({toolCall.Arguments})");
-                AppendLog("tool", $"< {toolCall.Result}");
-            }
+            hasPendingPlanApproval = true;
+            isPlanApproved = false;
+            UpdatePlanActionButtons( );
+            AppendLog("system", "Plan ready. Use Approve/Reject/Execute buttons or type /approve, /reject, /execute, /new.");
+        }
+        catch (OperationCanceledException)
+        {
+            waitCounterCancellation.Cancel( );
+            await waitCounterTask.ConfigureAwait(true);
+            CompletePlanWaitLine( );
+            RejectPendingPlan("Request cancelled.");
         }
         catch (Exception ex)
         {
             waitCounterCancellation.Cancel( );
             await waitCounterTask.ConfigureAwait(true);
             CompletePlanWaitLine( );
-            AppendLog("error", ex.Message);
+            RejectPendingPlan(ex.Message, "error");
         }
         finally
         {
             ToggleUi(true);
+            EndOperation(operation);
             inputBox.Focus( );
         }
     }
@@ -262,12 +442,188 @@ public partial class MainForm : Form
         planWaitLength = 0;
     }
 
+    private async Task<bool> TryHandlePendingPlanCommandAsync(string commandText)
+    {
+        if (runtime is null)
+        {
+            hasPendingPlanApproval = false;
+            isPlanApproved = false;
+            UpdatePlanActionButtons( );
+            return false;
+        }
+
+        if (commandText.Equals("/reject", StringComparison.OrdinalIgnoreCase))
+        {
+            AppendLog("you", commandText);
+            RejectPendingPlan("Plan rejected. Send an updated request when ready.");
+            return true;
+        }
+
+        if (commandText.Equals("/approve", StringComparison.OrdinalIgnoreCase))
+        {
+            AppendLog("you", commandText);
+            if (!hasPendingPlanApproval)
+            {
+                AppendLog("system", "No pending plan to approve.");
+                return true;
+            }
+
+            if (isPlanApproved)
+            {
+                AppendLog("system", "Plan is already approved. Use /execute to run.");
+                return true;
+            }
+
+            isPlanApproved = true;
+            AppendLog("system", "Plan approved. Use /execute to run it.");
+            UpdatePlanActionButtons( );
+            return true;
+        }
+
+        if (!commandText.Equals("/execute", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        AppendLog("you", commandText);
+        await ExecuteApprovedPlanAsync( ).ConfigureAwait(true);
+        return true;
+    }
+
+    private async Task ExecuteApprovedPlanAsync()
+    {
+        if (runtime is null)
+        {
+            return;
+        }
+
+        if (!hasPendingPlanApproval)
+        {
+            AppendLog("system", "No pending plan to execute.");
+            return;
+        }
+
+        if (!isPlanApproved)
+        {
+            AppendLog("system", "Approve the plan first, then execute.");
+            return;
+        }
+
+        var operation = BeginOperation( );
+        ToggleUi(false);
+
+        try
+        {
+            AppendLog("system", "Executing approved MCP plan...");
+            var result = await runtime.ExecuteApprovedPlanAsync(operation.Token).ConfigureAwait(true);
+            hasPendingPlanApproval = false;
+            isPlanApproved = false;
+            UpdatePlanActionButtons( );
+
+            foreach (var progressUpdate in result.ProgressUpdates)
+            {
+                AppendLog("plan", progressUpdate);
+            }
+
+            AppendLog("assistant", result.FinalResponse);
+
+            if (result.FailureDiagnostic is not null)
+            {
+                AppendLog("error", $"Execution failures: {result.FailureDiagnostic.FailedToolCount}");
+                foreach (var summary in result.FailureDiagnostic.FailureSummaries)
+                {
+                    AppendLog("error", summary);
+                }
+            }
+
+            foreach (var toolCall in result.ToolCalls)
+            {
+                var stepPrefix = $"[{toolCall.StepNumber}/{toolCall.TotalSteps}] ";
+                AppendLog("tool", $"> {stepPrefix}{toolCall.Name}{Environment.NewLine}{FormatHumanReadableJson(toolCall.Arguments)}");
+                AppendLog(toolCall.Succeeded ? "tool" : "error", $"< {stepPrefix}{FormatHumanReadableJson(toolCall.Result)}");
+
+                if (!string.IsNullOrWhiteSpace(toolCall.DiagnosticSummary))
+                {
+                    AppendLog("plan", $"diag {stepPrefix}{toolCall.DiagnosticSummary}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(toolCall.RawResponse) && !string.Equals(toolCall.RawResponse, toolCall.Result, StringComparison.Ordinal))
+                {
+                    AppendLog("plan", $"raw {stepPrefix}{FormatHumanReadableJson(toolCall.RawResponse)}");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            RejectPendingPlan("Execution cancelled.");
+        }
+        catch (Exception ex)
+        {
+            RejectPendingPlan($"Execution failed: {ex.Message}", "error");
+        }
+        finally
+        {
+            ToggleUi(true);
+            EndOperation(operation);
+            inputBox.Focus( );
+        }
+    }
+
+    private void RejectPendingPlan(string message, string role = "system")
+    {
+        runtime?.RejectPendingPlan( );
+        hasPendingPlanApproval = false;
+        isPlanApproved = false;
+        UpdatePlanActionButtons( );
+        AppendLog(role, message);
+    }
+
+    private void UpdatePlanActionButtons()
+    {
+        var canInteract = currentOperationCts is null;
+        approvePlanButton.Enabled = canInteract && hasPendingPlanApproval && !isPlanApproved;
+        rejectPlanButton.Enabled = canInteract && hasPendingPlanApproval;
+        executePlanButton.Enabled = canInteract && hasPendingPlanApproval && isPlanApproved;
+    }
+
+    private CancellationTokenSource BeginOperation()
+    {
+        currentOperationCts?.Dispose( );
+        currentOperationCts = new CancellationTokenSource( );
+        stopButton.Enabled = true;
+        UpdatePlanActionButtons( );
+        return currentOperationCts;
+    }
+
+    private void EndOperation(CancellationTokenSource operation)
+    {
+        if (ReferenceEquals(currentOperationCts, operation))
+        {
+            currentOperationCts = null;
+            stopButton.Enabled = false;
+            UpdatePlanActionButtons( );
+        }
+
+        operation.Dispose( );
+    }
+
     private void ToggleUi(bool enabled)
     {
         sendButton.Enabled = enabled;
         connectButton.Enabled = enabled;
         decodeImageButton.Enabled = enabled;
         demoButton.Enabled = enabled;
+
+        if (!enabled)
+        {
+            stopButton.Enabled = true;
+        }
+        else if (currentOperationCts is null)
+        {
+            stopButton.Enabled = false;
+        }
+
+        UpdatePlanActionButtons( );
     }
 
     private void SelectImage()
@@ -303,10 +659,47 @@ public partial class MainForm : Form
             _ => Color.MediumSeaGreen,
         };
 
+        var formattedMessage = FormatHumanReadableJson(message);
+        var normalized = formattedMessage.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var lines = normalized.Split('\n');
+
         chatLog.SelectionColor = color;
-        chatLog.AppendText($"[{role}] {message}{Environment.NewLine}{Environment.NewLine}");
+
+        if (lines.Length == 0)
+        {
+            chatLog.AppendText($"[{role}] {Environment.NewLine}{Environment.NewLine}");
+        }
+        else if (lines.Length == 1)
+        {
+            chatLog.AppendText($"[{role}] {lines[0]}{Environment.NewLine}{Environment.NewLine}");
+        }
+        else
+        {
+            chatLog.AppendText($"[{role}] {lines[0]}{Environment.NewLine}");
+
+            for (var index = 1; index < lines.Length; index++)
+            {
+                chatLog.AppendText($"       {lines[index]}{Environment.NewLine}");
+            }
+
+            chatLog.AppendText(Environment.NewLine);
+        }
+
         chatLog.SelectionStart = chatLog.TextLength;
         chatLog.ScrollToCaret( );
+    }
+
+    private void AppendPlanDiagnostics(ChatPlanProposal planProposal)
+    {
+        if (planProposal.Diagnostics is null || planProposal.Diagnostics.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var diagnostic in planProposal.Diagnostics)
+        {
+            AppendLog("plan", $"diag {diagnostic}");
+        }
     }
 
     private static string FormatToolList(IReadOnlyList<string> toolNames)
@@ -340,9 +733,78 @@ public partial class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        currentOperationCts?.Cancel( );
+        currentOperationCts?.Dispose( );
+        currentOperationCts = null;
+
         runtime?.Dispose( );
         imagePreview.Image?.Dispose( );
         base.OnFormClosing(e);
+    }
+
+    private static string GetDefaultMcpCommandPath()
+    {
+        var configuredPath = Environment.GetEnvironmentVariable("SOLIDWORKS_MCP_COMMAND");
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            return Path.GetFullPath(configuredPath);
+        }
+
+        var appFolderPath = Path.Combine(AppContext.BaseDirectory, "SolidworksMCP.exe");
+
+#if DEBUG
+        if (Debugger.IsAttached)
+        {
+            var solutionBuildPath = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "SolidworksMCP",
+                "bin",
+                "Debug",
+                "net9.0",
+                "SolidworksMCP.exe"));
+
+            if (File.Exists(solutionBuildPath))
+            {
+                return solutionBuildPath;
+            }
+        }
+#endif
+
+        return appFolderPath;
+    }
+
+    private static string FormatHumanReadableJson(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return message;
+        }
+
+        var trimmed = message.Trim( );
+
+        if (trimmed.StartsWith("```json", StringComparison.OrdinalIgnoreCase) && trimmed.EndsWith("```", StringComparison.Ordinal))
+        {
+            trimmed = trimmed[7..^3].Trim( );
+        }
+
+        if (!((trimmed.StartsWith('{') && trimmed.EndsWith('}')) || (trimmed.StartsWith('[') && trimmed.EndsWith(']'))))
+        {
+            return message;
+        }
+
+        try
+        {
+            using var json = JsonDocument.Parse(trimmed);
+            return JsonSerializer.Serialize(json.RootElement, PrettyJsonOptions);
+        }
+        catch (JsonException)
+        {
+            return message;
+        }
     }
 
     private void MainForm_Resize(object? sender, EventArgs e)
@@ -425,6 +887,11 @@ public partial class MainForm : Form
 
     private async void btnLaunchSolidoworksAndTestConnection_Click(object sender, EventArgs e)
     {
+        ConnecttoSolidWorks( );
+    }
+
+    private async void ConnecttoSolidWorks()
+    {
         try
         {
             await ConnectAsync( ).ConfigureAwait(true);
@@ -433,6 +900,12 @@ public partial class MainForm : Form
         {
             AppendLog("error", ex.Message);
         }
+    }
+
+    private void MainForm_Load(object sender, EventArgs e)
+    {
+        // ConnectAsync to Solidworks
+        ConnecttoSolidWorks( );
     }
 }
 

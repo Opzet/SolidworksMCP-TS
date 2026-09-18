@@ -17,6 +17,8 @@ internal sealed class McpClient : IDisposable
     };
 
     private int nextId = 1;
+    private readonly Queue<string> stderrLines = new();
+    private readonly object stderrLock = new();
 
     public McpClient(string command, string[] args)
     {
@@ -47,6 +49,7 @@ internal sealed class McpClient : IDisposable
         {
             if (!string.IsNullOrWhiteSpace(eventArgs.Data))
             {
+                CaptureStandardErrorLine(eventArgs.Data);
                 Debug.WriteLine($"mcp-err> {eventArgs.Data}");
             }
         };
@@ -91,9 +94,9 @@ internal sealed class McpClient : IDisposable
         return names;
     }
 
-    public async Task<JsonArray> ListToolsAsOllamaToolsAsync()
+    public async Task<JsonArray> ListToolsAsOllamaToolsAsync(CancellationToken cancellationToken = default)
     {
-        var tools = await ListToolsAsync().ConfigureAwait(false);
+        var tools = await ListToolsAsync(cancellationToken).ConfigureAwait(false);
         var ollamaTools = new JsonArray();
         foreach (var node in tools)
         {
@@ -117,30 +120,66 @@ internal sealed class McpClient : IDisposable
         return ollamaTools;
     }
 
-    public async Task<string> CallToolAsync(string toolName, JsonObject arguments)
+    public async Task<McpToolCallResult> CallToolAsync(string toolName, JsonObject arguments, CancellationToken cancellationToken = default)
     {
+        var stderrCheckpoint = GetStandardErrorSnapshot();
         var result = await SendRequestAsync("tools/call", new JsonObject
         {
             ["name"] = toolName,
             ["arguments"] = arguments,
-        }).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
 
+        var rawJson = result.ToJsonString(serializerOptions);
+        var displayText = rawJson;
         var content = result["content"] as JsonArray;
         if (content is { Count: > 0 } && content[0] is JsonObject first)
         {
-            return first["text"]?.GetValue<string>() ?? result.ToJsonString();
+            displayText = first["text"]?.GetValue<string>() ?? rawJson;
         }
 
-        return result.ToJsonString();
+        var stderrSummary = BuildStandardErrorSummary(stderrCheckpoint);
+        return new McpToolCallResult(displayText, rawJson, stderrSummary);
     }
 
-    private async Task<JsonArray> ListToolsAsync()
+    private async Task<JsonArray> ListToolsAsync(CancellationToken cancellationToken)
     {
-        var result = await SendRequestAsync("tools/list", new JsonObject()).ConfigureAwait(false);
+        var result = await SendRequestAsync("tools/list", new JsonObject(), cancellationToken).ConfigureAwait(false);
         return result["tools"] as JsonArray ?? [];
     }
 
-    private async Task<JsonObject> SendRequestAsync(string method, JsonObject @params)
+    private void CaptureStandardErrorLine(string line)
+    {
+        lock (stderrLock)
+        {
+            stderrLines.Enqueue(line);
+            while (stderrLines.Count > 25)
+            {
+                _ = stderrLines.Dequeue();
+            }
+        }
+    }
+
+    private string[] GetStandardErrorSnapshot()
+    {
+        lock (stderrLock)
+        {
+            return [.. stderrLines];
+        }
+    }
+
+    private string? BuildStandardErrorSummary(string[] beforeSnapshot)
+    {
+        var currentSnapshot = GetStandardErrorSnapshot();
+        if (currentSnapshot.Length <= beforeSnapshot.Length)
+        {
+            return null;
+        }
+
+        var newLines = currentSnapshot[beforeSnapshot.Length..];
+        return newLines.Length == 0 ? null : string.Join(Environment.NewLine, newLines);
+    }
+
+    private async Task<JsonObject> SendRequestAsync(string method, JsonObject @params, CancellationToken cancellationToken)
     {
         var requestId = nextId++;
 
@@ -150,11 +189,12 @@ internal sealed class McpClient : IDisposable
             ["id"] = requestId,
             ["method"] = method,
             ["params"] = @params,
-        }).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
 
         while (true)
         {
-            var response = await ReadMessageAsync().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            var response = await ReadMessageAsync(cancellationToken).ConfigureAwait(false);
             if (response["id"]?.GetValue<int>() != requestId)
             {
                 continue;
@@ -169,28 +209,28 @@ internal sealed class McpClient : IDisposable
         }
     }
 
-    private async Task WriteMessageAsync(JsonObject message)
+    private async Task WriteMessageAsync(JsonObject message, CancellationToken cancellationToken)
     {
         var input = stdin ?? throw new InvalidOperationException("MCP stdin not initialized.");
 
         var payload = Encoding.UTF8.GetBytes(message.ToJsonString(serializerOptions));
         var header = Encoding.ASCII.GetBytes($"Content-Length: {payload.Length}\r\n\r\n");
 
-        await input.WriteAsync(header).ConfigureAwait(false);
-        await input.WriteAsync(payload).ConfigureAwait(false);
-        await input.FlushAsync().ConfigureAwait(false);
+        await input.WriteAsync(header, cancellationToken).ConfigureAwait(false);
+        await input.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+        await input.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<JsonObject> ReadMessageAsync()
+    private async Task<JsonObject> ReadMessageAsync(CancellationToken cancellationToken)
     {
         var output = stdout ?? throw new InvalidOperationException("MCP stdout not initialized.");
-        var contentLength = await ReadContentLengthAsync(output).ConfigureAwait(false);
+        var contentLength = await ReadContentLengthAsync(output, cancellationToken).ConfigureAwait(false);
 
         var buffer = new byte[contentLength];
         var offset = 0;
         while (offset < contentLength)
         {
-            var read = await output.ReadAsync(buffer.AsMemory(offset, contentLength - offset)).ConfigureAwait(false);
+            var read = await output.ReadAsync(buffer.AsMemory(offset, contentLength - offset), cancellationToken).ConfigureAwait(false);
             if (read == 0)
             {
                 throw new EndOfStreamException("MCP server closed stdout while reading payload.");
@@ -203,14 +243,14 @@ internal sealed class McpClient : IDisposable
         return JsonNode.Parse(json) as JsonObject ?? throw new InvalidOperationException("Invalid MCP JSON-RPC payload.");
     }
 
-    private static async Task<int> ReadContentLengthAsync(Stream output)
+    private static async Task<int> ReadContentLengthAsync(Stream output, CancellationToken cancellationToken)
     {
         var bytes = new List<byte>();
         var one = new byte[1];
 
         while (true)
         {
-            var read = await output.ReadAsync(one).ConfigureAwait(false);
+            var read = await output.ReadAsync(one, cancellationToken).ConfigureAwait(false);
             if (read == 0)
             {
                 throw new EndOfStreamException("MCP server closed stdout while reading headers.");

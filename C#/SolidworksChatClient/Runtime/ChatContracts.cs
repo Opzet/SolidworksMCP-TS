@@ -4,9 +4,37 @@ using System.Text.Json.Nodes;
 
 internal sealed record ChatSettings(string OllamaBaseUrl, string Model, string McpCommand, string[] McpArgs);
 
-internal sealed record ToolExecution(string Name, string Arguments, string Result);
+internal sealed record ToolExecution(
+    int StepNumber,
+    int TotalSteps,
+    string Name,
+    string Arguments,
+    string Result,
+    bool Succeeded,
+    string? FailureSummary,
+    string? DiagnosticSummary,
+    string? RawResponse = null);
 
-internal sealed record ChatTurnResult(string FinalResponse, IReadOnlyList<ToolExecution> ToolCalls, IReadOnlyList<string> ProgressUpdates);
+internal sealed record PlannedToolCall(string Name, string Arguments, string Source = "tool-call");
+
+internal sealed record ChatPlanProposal(
+    string PlanSummary,
+    IReadOnlyList<PlannedToolCall> PlannedToolCalls,
+    bool RequiresApproval,
+    string ParseSource = "tool-call",
+    IReadOnlyList<string>? Diagnostics = null);
+
+internal sealed record ChatFailureDiagnostic(
+    int FailedToolCount,
+    IReadOnlyList<string> FailureSummaries,
+    IReadOnlyList<string> DiagnosticDetails);
+
+internal sealed record ChatTurnResult(
+    string FinalResponse,
+    IReadOnlyList<ToolExecution> ToolCalls,
+    IReadOnlyList<string> ProgressUpdates,
+    string FinalAssistantMessage,
+    ChatFailureDiagnostic? FailureDiagnostic = null);
 
 internal sealed record OllamaChatRequest(string Model, IReadOnlyList<OllamaMessage> Messages, JsonArray? Tools, bool Stream);
 
@@ -19,6 +47,8 @@ internal sealed record OllamaConnectionStatus(
     IReadOnlyList<string> AvailableModels);
 
 internal sealed record McpConnectionStatus(int ToolCount, IReadOnlyList<string> ToolNames);
+
+internal sealed record McpToolCallResult(string DisplayText, string RawJson, string? StderrSummary = null);
 
 internal sealed record SolidWorksWarmupStatus(bool Attempted, bool Succeeded, string Message);
 

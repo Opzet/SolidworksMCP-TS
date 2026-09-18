@@ -29,7 +29,7 @@ public static class SketchTools
         }
         catch (Exception ex)
         {
-            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to create sketch: {ex.Message}"));
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"HandleCreateSketch > Failed to create sketch: {ex.Message}"));
         }
     }
 
@@ -54,29 +54,8 @@ public static class SketchTools
         try
         {
             var args = ToolHelpers.ToArguments(arguments);
-            var model = api.GetCurrentModel() ?? throw new InvalidOperationException("No active model");
-            var sketchManager = model.GetType().GetProperty("SketchManager")?.GetValue(model);
-            if (sketchManager is null)
-            {
-                throw new InvalidOperationException("SketchManager unavailable");
-            }
-
-            var result = sketchManager.GetType().GetMethod("CreateCircle")?.Invoke(sketchManager, [ToolHelpers.GetDouble(args, "centerX") / 1000d, ToolHelpers.GetDouble(args, "centerY") / 1000d, ToolHelpers.GetDouble(args, "centerZ") / 1000d, ToolHelpers.GetDouble(args, "radius") / 1000d]);
-            if (result is null)
-            {
-                result = sketchManager.GetType().GetMethod("CreateCircle2")?.Invoke(sketchManager, [ToolHelpers.GetDouble(args, "centerX") / 1000d, ToolHelpers.GetDouble(args, "centerY") / 1000d, ToolHelpers.GetDouble(args, "centerZ") / 1000d, ToolHelpers.GetDouble(args, "radius") / 1000d]);
-            }
-
-            if (result is null)
-            {
-                throw new InvalidOperationException("Failed to create circle");
-            }
-
-            return ValueTask.FromResult<object?>(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["success"] = true,
-                ["circleId"] = $"circle_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
-            });
+            var result = api.AddCircle(args);
+            return ValueTask.FromResult<object?>(result);
         }
         catch (Exception ex)
         {
@@ -90,15 +69,8 @@ public static class SketchTools
         try
         {
             var args = ToolHelpers.ToArguments(arguments);
-            var model = api.GetCurrentModel() ?? throw new InvalidOperationException("No active model");
-            var sketchManager = model.GetType().GetProperty("SketchManager")?.GetValue(model) ?? throw new InvalidOperationException("SketchManager unavailable");
-            var result = sketchManager.GetType().GetMethod("CreateCornerRectangle")?.Invoke(sketchManager, [ToolHelpers.GetDouble(args, "x1") / 1000d, ToolHelpers.GetDouble(args, "y1") / 1000d, 0d, ToolHelpers.GetDouble(args, "x2") / 1000d, ToolHelpers.GetDouble(args, "y2") / 1000d, 0d]);
-            if (result is null)
-            {
-                result = sketchManager.GetType().GetMethod("CreateCenterRectangle")?.Invoke(sketchManager, [((ToolHelpers.GetDouble(args, "x1") + ToolHelpers.GetDouble(args, "x2")) / 2d) / 1000d, ((ToolHelpers.GetDouble(args, "y1") + ToolHelpers.GetDouble(args, "y2")) / 2d) / 1000d, 0d, Math.Abs(ToolHelpers.GetDouble(args, "x2") - ToolHelpers.GetDouble(args, "x1")) / 1000d, Math.Abs(ToolHelpers.GetDouble(args, "y2") - ToolHelpers.GetDouble(args, "y1")) / 1000d]);
-            }
-
-            return ValueTask.FromResult<object?>(result is null ? ToolHelpers.Failure("Failed to create rectangle") : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["success"] = true, ["rectangleId"] = $"rect_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" });
+            var result = api.AddRectangle(args);
+            return ValueTask.FromResult<object?>(result);
         }
         catch (Exception ex)
         {
@@ -112,20 +84,8 @@ public static class SketchTools
         var args = ToolHelpers.ToArguments(arguments);
         try
         {
-            var model = api.GetCurrentModel() ?? throw new InvalidOperationException("No active model");
-            var sketchManager = model.GetType().GetProperty("SketchManager")?.GetValue(model) ?? throw new InvalidOperationException("SketchManager unavailable");
-            sketchManager.GetType().GetMethod("InsertSketch")?.Invoke(sketchManager, [true]);
-
-            if (ToolHelpers.GetBool(args, "rebuild", true))
-            {
-                model.GetType().GetMethod("EditRebuild3")?.Invoke(model, []);
-            }
-
-            return ValueTask.FromResult<object?>(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["success"] = true,
-                ["message"] = "Exited sketch edit mode",
-            });
+            var result = api.ExitSketch(ToolHelpers.GetBool(args, "rebuild", true));
+            return ValueTask.FromResult<object?>(result);
         }
         catch (Exception ex)
         {

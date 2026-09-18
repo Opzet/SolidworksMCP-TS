@@ -39,15 +39,15 @@ public static class ExportTools
             var model = api.GetCurrentModel() ?? throw new InvalidOperationException("No model open");
             var outputDir = ToolHelpers.GetString(args, "outputDir");
             var format = ToolHelpers.GetString(args, "format");
-            var modelName = Path.GetFileNameWithoutExtension(model.GetType().GetMethod("GetPathName")?.Invoke(model, [])?.ToString() ?? "model");
-            var exported = new List<string>();
+            var modelName = Path.GetFileNameWithoutExtension(api.GetCurrentModelPath() ?? api.GetCurrentModelTitleOrPath() ?? "model");
+            List<string> exported = [];
 
             var configurations = ToolHelpers.GetStringList(args, "configurations");
             if (configurations.Count > 0)
             {
                 foreach (var configuration in configurations)
                 {
-                    model.GetType().GetMethod("ShowConfiguration2")?.Invoke(model, [configuration]);
+                    _ = model.GetType().GetMethod("ShowConfiguration2")?.Invoke(model, [configuration]);
                     var filename = $"{ToolHelpers.GetString(args, "prefix")}{modelName}_{configuration}.{format}";
                     var outputPath = Path.Combine(outputDir, filename);
                     api.ExportFile(outputPath, format);

@@ -29,12 +29,15 @@ partial class MainForm
     private Button decodeImageButton;
     private Button demoButton;
     private Button sendButton;
+    private Button stopButton;
+    private Button approvePlanButton;
+    private Button rejectPlanButton;
+    private Button executePlanButton;
     private PictureBox imagePreview;
 
     private TableLayoutPanel settingsLayout;
     private TextBox ollamaUrlBox;
     private TextBox modelBox;
-    private TextBox mcpCommandBox;
     private TextBox mcpArgsBox;
     private Button connectButton;
 
@@ -62,6 +65,7 @@ partial class MainForm
         rightPanel = new TableLayoutPanel( );
         uploadButton = new Button( );
         imagePathLabel = new Label( );
+        btnLaunchSolidoworksAndTestConnection = new Button( );
         attachImageCheckBox = new CheckBox( );
         imagePreview = new PictureBox( );
         decodeImageButton = new Button( );
@@ -69,13 +73,15 @@ partial class MainForm
         inputPanel = new TableLayoutPanel( );
         inputBox = new TextBox( );
         sendButton = new Button( );
+        stopButton = new Button( );
+        approvePlanButton = new Button( );
+        rejectPlanButton = new Button( );
+        executePlanButton = new Button( );
         settingsTab = new TabPage( );
         settingsLayout = new TableLayoutPanel( );
         modelBox = new TextBox( );
-        mcpCommandBox = new TextBox( );
         mcpArgsBox = new TextBox( );
         settingsHint = new Label( );
-        btnLaunchSolidoworksAndTestConnection = new Button( );
         ollamaUrlBox = new TextBox( );
         connectButton = new Button( );
         rootLayout.SuspendLayout( );
@@ -202,7 +208,7 @@ partial class MainForm
         // 
         chatSplit.Panel2.Controls.Add(rightPanel);
         chatSplit.Panel2MinSize = 220;
-        chatSplit.Size = new Size(1220, 483);
+        chatSplit.Size = new Size(1220, 610);
         chatSplit.SplitterDistance = 984;
         chatSplit.TabIndex = 0;
         // 
@@ -216,7 +222,7 @@ partial class MainForm
         chatLog.Location = new Point(0, 0);
         chatLog.Name = "chatLog";
         chatLog.ReadOnly = true;
-        chatLog.Size = new Size(984, 483);
+        chatLog.Size = new Size(984, 610);
         chatLog.TabIndex = 0;
         chatLog.Text = "";
         // 
@@ -244,7 +250,7 @@ partial class MainForm
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45F));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45F));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45F));
-        rightPanel.Size = new Size(232, 483);
+        rightPanel.Size = new Size(232, 610);
         rightPanel.TabIndex = 0;
         // 
         // uploadButton
@@ -275,6 +281,23 @@ partial class MainForm
         imagePathLabel.TabIndex = 1;
         imagePathLabel.Text = "No image selected";
         // 
+        // btnLaunchSolidoworksAndTestConnection
+        // 
+        btnLaunchSolidoworksAndTestConnection.AutoSize = true;
+        btnLaunchSolidoworksAndTestConnection.BackColor = Color.FromArgb(  255,   128,   128);
+        btnLaunchSolidoworksAndTestConnection.FlatAppearance.BorderSize = 0;
+        btnLaunchSolidoworksAndTestConnection.FlatStyle = FlatStyle.Flat;
+        btnLaunchSolidoworksAndTestConnection.ForeColor = Color.White;
+        btnLaunchSolidoworksAndTestConnection.Location = new Point(10, 567);
+        btnLaunchSolidoworksAndTestConnection.Margin = new Padding(0, 12, 0, 0);
+        btnLaunchSolidoworksAndTestConnection.Name = "btnLaunchSolidoworksAndTestConnection";
+        btnLaunchSolidoworksAndTestConnection.Padding = new Padding(12, 6, 12, 6);
+        btnLaunchSolidoworksAndTestConnection.Size = new Size(212, 33);
+        btnLaunchSolidoworksAndTestConnection.TabIndex = 6;
+        btnLaunchSolidoworksAndTestConnection.Text = "Warm up Solidworks";
+        btnLaunchSolidoworksAndTestConnection.UseVisualStyleBackColor = false;
+        btnLaunchSolidoworksAndTestConnection.Click += btnLaunchSolidoworksAndTestConnection_Click;
+        // 
         // attachImageCheckBox
         // 
         attachImageCheckBox.AutoSize = true;
@@ -296,7 +319,7 @@ partial class MainForm
         imagePreview.Dock = DockStyle.Fill;
         imagePreview.Location = new Point(13, 111);
         imagePreview.Name = "imagePreview";
-        imagePreview.Size = new Size(206, 224);
+        imagePreview.Size = new Size(206, 351);
         imagePreview.SizeMode = PictureBoxSizeMode.Zoom;
         imagePreview.TabIndex = 3;
         imagePreview.TabStop = false;
@@ -308,7 +331,7 @@ partial class MainForm
         decodeImageButton.FlatAppearance.BorderSize = 0;
         decodeImageButton.FlatStyle = FlatStyle.Flat;
         decodeImageButton.ForeColor = Color.White;
-        decodeImageButton.Location = new Point(10, 346);
+        decodeImageButton.Location = new Point(10, 473);
         decodeImageButton.Margin = new Padding(0, 8, 0, 0);
         decodeImageButton.Name = "decodeImageButton";
         decodeImageButton.Padding = new Padding(8, 6, 8, 6);
@@ -325,7 +348,7 @@ partial class MainForm
         demoButton.FlatAppearance.BorderSize = 0;
         demoButton.FlatStyle = FlatStyle.Flat;
         demoButton.ForeColor = Color.White;
-        demoButton.Location = new Point(10, 391);
+        demoButton.Location = new Point(10, 518);
         demoButton.Margin = new Padding(0, 8, 0, 0);
         demoButton.Name = "demoButton";
         demoButton.Padding = new Padding(8, 6, 8, 6);
@@ -338,19 +361,27 @@ partial class MainForm
         // inputPanel
         // 
         inputPanel.BackColor = Color.FromArgb(  37,   41,   48);
-        inputPanel.ColumnCount = 2;
+        inputPanel.ColumnCount = 6;
         inputPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        inputPanel.ColumnStyles.Add(new ColumnStyle( ));
+        inputPanel.ColumnStyles.Add(new ColumnStyle( ));
+        inputPanel.ColumnStyles.Add(new ColumnStyle( ));
+        inputPanel.ColumnStyles.Add(new ColumnStyle( ));
         inputPanel.ColumnStyles.Add(new ColumnStyle( ));
         inputPanel.Controls.Add(inputBox, 0, 0);
         inputPanel.Controls.Add(sendButton, 1, 0);
+        inputPanel.Controls.Add(stopButton, 2, 0);
+        inputPanel.Controls.Add(approvePlanButton, 3, 0);
+        inputPanel.Controls.Add(rejectPlanButton, 4, 0);
+        inputPanel.Controls.Add(executePlanButton, 5, 0);
         inputPanel.Dock = DockStyle.Bottom;
-        inputPanel.Location = new Point(0, 499);
+        inputPanel.Location = new Point(0, 626);
         inputPanel.Margin = new Padding(0, 10, 0, 0);
         inputPanel.Name = "inputPanel";
         inputPanel.Padding = new Padding(10);
         inputPanel.RowCount = 1;
         inputPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
-        inputPanel.Size = new Size(1226, 225);
+        inputPanel.Size = new Size(1226, 98);
         inputPanel.TabIndex = 1;
         // 
         // inputBox
@@ -364,7 +395,7 @@ partial class MainForm
         inputBox.Multiline = true;
         inputBox.Name = "inputBox";
         inputBox.ScrollBars = ScrollBars.Vertical;
-        inputBox.Size = new Size(1070, 199);
+        inputBox.Size = new Size(625, 72);
         inputBox.TabIndex = 0;
         // 
         // sendButton
@@ -374,15 +405,87 @@ partial class MainForm
         sendButton.FlatAppearance.BorderSize = 0;
         sendButton.FlatStyle = FlatStyle.Flat;
         sendButton.ForeColor = Color.White;
-        sendButton.Location = new Point(1096, 10);
+        sendButton.Location = new Point(651, 10);
         sendButton.Margin = new Padding(10, 0, 0, 0);
         sendButton.Name = "sendButton";
         sendButton.Padding = new Padding(8, 6, 8, 6);
-        sendButton.Size = new Size(120, 205);
+        sendButton.Size = new Size(120, 78);
         sendButton.TabIndex = 1;
         sendButton.Text = "Send";
         sendButton.UseVisualStyleBackColor = false;
         sendButton.Click += SendButton_Click;
+        // 
+        // stopButton
+        // 
+        stopButton.BackColor = Color.FromArgb(  172,   61,   61);
+        stopButton.Dock = DockStyle.Right;
+        stopButton.Enabled = false;
+        stopButton.FlatAppearance.BorderSize = 0;
+        stopButton.FlatStyle = FlatStyle.Flat;
+        stopButton.ForeColor = Color.White;
+        stopButton.Location = new Point(781, 10);
+        stopButton.Margin = new Padding(10, 0, 0, 0);
+        stopButton.Name = "stopButton";
+        stopButton.Padding = new Padding(8, 6, 8, 6);
+        stopButton.Size = new Size(120, 78);
+        stopButton.TabIndex = 2;
+        stopButton.Text = "Stop";
+        stopButton.UseVisualStyleBackColor = false;
+        stopButton.Click += StopButton_Click;
+        // 
+        // approvePlanButton
+        // 
+        approvePlanButton.BackColor = Color.FromArgb(  73,   138,   86);
+        approvePlanButton.Dock = DockStyle.Right;
+        approvePlanButton.Enabled = false;
+        approvePlanButton.FlatAppearance.BorderSize = 0;
+        approvePlanButton.FlatStyle = FlatStyle.Flat;
+        approvePlanButton.ForeColor = Color.White;
+        approvePlanButton.Location = new Point(911, 10);
+        approvePlanButton.Margin = new Padding(10, 0, 0, 0);
+        approvePlanButton.Name = "approvePlanButton";
+        approvePlanButton.Padding = new Padding(8, 6, 8, 6);
+        approvePlanButton.Size = new Size(95, 78);
+        approvePlanButton.TabIndex = 3;
+        approvePlanButton.Text = "Approve";
+        approvePlanButton.UseVisualStyleBackColor = false;
+        approvePlanButton.Click += ApprovePlanButton_Click;
+        // 
+        // rejectPlanButton
+        // 
+        rejectPlanButton.BackColor = Color.FromArgb(  120,   96,   72);
+        rejectPlanButton.Dock = DockStyle.Right;
+        rejectPlanButton.Enabled = false;
+        rejectPlanButton.FlatAppearance.BorderSize = 0;
+        rejectPlanButton.FlatStyle = FlatStyle.Flat;
+        rejectPlanButton.ForeColor = Color.White;
+        rejectPlanButton.Location = new Point(1016, 10);
+        rejectPlanButton.Margin = new Padding(10, 0, 0, 0);
+        rejectPlanButton.Name = "rejectPlanButton";
+        rejectPlanButton.Padding = new Padding(8, 6, 8, 6);
+        rejectPlanButton.Size = new Size(95, 78);
+        rejectPlanButton.TabIndex = 4;
+        rejectPlanButton.Text = "Reject";
+        rejectPlanButton.UseVisualStyleBackColor = false;
+        rejectPlanButton.Click += RejectPlanButton_Click;
+        // 
+        // executePlanButton
+        // 
+        executePlanButton.BackColor = Color.FromArgb(  49,   120,   198);
+        executePlanButton.Dock = DockStyle.Right;
+        executePlanButton.Enabled = false;
+        executePlanButton.FlatAppearance.BorderSize = 0;
+        executePlanButton.FlatStyle = FlatStyle.Flat;
+        executePlanButton.ForeColor = Color.White;
+        executePlanButton.Location = new Point(1121, 10);
+        executePlanButton.Margin = new Padding(10, 0, 0, 0);
+        executePlanButton.Name = "executePlanButton";
+        executePlanButton.Padding = new Padding(8, 6, 8, 6);
+        executePlanButton.Size = new Size(95, 78);
+        executePlanButton.TabIndex = 5;
+        executePlanButton.Text = "Execute";
+        executePlanButton.UseVisualStyleBackColor = false;
+        executePlanButton.Click += ExecutePlanButton_Click;
         // 
         // settingsTab
         // 
@@ -403,23 +506,21 @@ partial class MainForm
         settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190F));
         settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         settingsLayout.Controls.Add(modelBox, 1, 1);
-        settingsLayout.Controls.Add(mcpCommandBox, 1, 2);
-        settingsLayout.Controls.Add(mcpArgsBox, 1, 3);
-        settingsLayout.Controls.Add(settingsHint, 0, 4);
+        settingsLayout.Controls.Add(mcpArgsBox, 1, 2);
+        settingsLayout.Controls.Add(settingsHint, 0, 3);
         settingsLayout.Controls.Add(ollamaUrlBox, 1, 0);
         settingsLayout.Controls.Add(connectButton, 0, 0);
         settingsLayout.Dock = DockStyle.Top;
         settingsLayout.Location = new Point(16, 16);
         settingsLayout.Name = "settingsLayout";
         settingsLayout.Padding = new Padding(16);
-        settingsLayout.RowCount = 6;
+        settingsLayout.RowCount = 5;
         settingsLayout.RowStyles.Add(new RowStyle( ));
         settingsLayout.RowStyles.Add(new RowStyle( ));
         settingsLayout.RowStyles.Add(new RowStyle( ));
         settingsLayout.RowStyles.Add(new RowStyle( ));
         settingsLayout.RowStyles.Add(new RowStyle( ));
-        settingsLayout.RowStyles.Add(new RowStyle( ));
-        settingsLayout.Size = new Size(1210, 229);
+        settingsLayout.Size = new Size(1210, 192);
         settingsLayout.TabIndex = 0;
         // 
         // modelBox
@@ -431,46 +532,22 @@ partial class MainForm
         modelBox.TabIndex = 1;
         modelBox.Text = "qwen2.5-coder:14b";
         // 
-        // mcpCommandBox
-        // 
-        mcpCommandBox.Dock = DockStyle.Top;
-        mcpCommandBox.Location = new Point(209, 135);
-        mcpCommandBox.Name = "mcpCommandBox";
-        mcpCommandBox.Size = new Size(982, 23);
-        mcpCommandBox.TabIndex = 2;
-        mcpCommandBox.Text = "D:/source/repos/SolidworksMCP-TS/C#/SolidworksMCP/bin/Debug/net9.0/SolidworksMCP.exe";
-        // 
         // mcpArgsBox
         // 
         mcpArgsBox.Dock = DockStyle.Top;
-        mcpArgsBox.Location = new Point(209, 164);
+        mcpArgsBox.Location = new Point(209, 135);
         mcpArgsBox.Name = "mcpArgsBox";
         mcpArgsBox.Size = new Size(982, 23);
-        mcpArgsBox.TabIndex = 3;
+        mcpArgsBox.TabIndex = 2;
         // 
         // settingsHint
         // 
-        settingsHint.Location = new Point(19, 190);
+        settingsHint.AutoSize = true;
+        settingsHint.ForeColor = Color.Gainsboro;
+        settingsHint.Location = new Point(19, 161);
         settingsHint.Name = "settingsHint";
-        settingsHint.Size = new Size(100, 23);
-        settingsHint.TabIndex = 4;
-        // 
-        // btnLaunchSolidoworksAndTestConnection
-        // 
-        btnLaunchSolidoworksAndTestConnection.AutoSize = true;
-        btnLaunchSolidoworksAndTestConnection.BackColor = Color.FromArgb(  255,   128,   128);
-        btnLaunchSolidoworksAndTestConnection.FlatAppearance.BorderSize = 0;
-        btnLaunchSolidoworksAndTestConnection.FlatStyle = FlatStyle.Flat;
-        btnLaunchSolidoworksAndTestConnection.ForeColor = Color.White;
-        btnLaunchSolidoworksAndTestConnection.Location = new Point(10, 440);
-        btnLaunchSolidoworksAndTestConnection.Margin = new Padding(0, 12, 0, 0);
-        btnLaunchSolidoworksAndTestConnection.Name = "btnLaunchSolidoworksAndTestConnection";
-        btnLaunchSolidoworksAndTestConnection.Padding = new Padding(12, 6, 12, 6);
-        btnLaunchSolidoworksAndTestConnection.Size = new Size(212, 33);
-        btnLaunchSolidoworksAndTestConnection.TabIndex = 6;
-        btnLaunchSolidoworksAndTestConnection.Text = "Warm up Solidworks";
-        btnLaunchSolidoworksAndTestConnection.UseVisualStyleBackColor = false;
-        btnLaunchSolidoworksAndTestConnection.Click += btnLaunchSolidoworksAndTestConnection_Click;
+        settingsHint.Size = new Size(0, 15);
+        settingsHint.TabIndex = 3;
         // 
         // ollamaUrlBox
         // 
@@ -508,6 +585,7 @@ partial class MainForm
         Name = "MainForm";
         StartPosition = FormStartPosition.CenterScreen;
         Text = "SolidWorks Chat Client (Ollama + MCP)";
+        Load += MainForm_Load;
         rootLayout.ResumeLayout(false);
         headerPanel.ResumeLayout(false);
         headerPanel.PerformLayout( );
