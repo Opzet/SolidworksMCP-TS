@@ -1,0 +1,25 @@
+<MudThemeProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1">
+        <MudText Typo="Typo.h6">SolidWorks Orchestrator</MudText>
+        <MudSpacer />
+        <MudText Typo="Typo.body2">@statusText</MudText>
+    </MudAppBar>
+
+    <MudMainContent>
+        <ChatWorkspace OnStatusChanged="OnStatusChanged" />
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private string statusText = "Status: disconnected";
+
+    private void OnStatusChanged(string status)
+    {
+        statusText = status;
+        StateHasChanged();
+    }
+}

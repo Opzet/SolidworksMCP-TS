@@ -1,4 +1,4 @@
-﻿namespace AutoWorks
+namespace AutoWorks
 {
     partial class MainForm
     {
@@ -49,8 +49,9 @@
             Controls.Add(BlazorWebView);
             Icon = (Icon) resources.GetObject("$this.Icon");
             Name = "MainForm";
+            ShowIcon = false;
             StartPosition = FormStartPosition.CenterScreen;
-            Text = "AutoWorks";
+            Text = "AutoWorks - Solidworks Automator";
             ResumeLayout(false);
         }
 
@@ -59,3 +60,4 @@
         public Microsoft.AspNetCore.Components.WebView.WindowsForms.BlazorWebView BlazorWebView;
     }
 }
+

@@ -1,0 +1,606 @@
+@using System.Diagnostics
+@using System.Text
+@using System.Text.Encodings.Web
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Web
+@using AutoWorks.Runtime
+
+<MudGrid Class="pa-4" Spacing="2">
+    <MudItem xs="12" md="8">
+        <MudPaper Class="pa-3" Outlined="true" Style="height: 70vh; overflow:auto;">
+            @foreach (var entry in logEntries)
+            {
+                <MudText Typo="Typo.body2" Class="mb-1" Color="@GetColor(entry.Role)">
+                    <b>[ @entry.Role ]</b> @entry.Message
+                </MudText>
+            }
+        </MudPaper>
+
+        <MudStack Row="true" Spacing="1" Class="mt-2">
+            <MudTextField @bind-Value="prompt"
+                          Placeholder="Describe the SolidWorks task, then press Enter to send..."
+                          Lines="3"
+                          Variant="Variant.Outlined"
+                          FullWidth="true"
+                          Disabled="isBusy"
+                          OnKeyDown="HandlePromptKeyDown" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SendAsync" Disabled="isBusy || string.IsNullOrWhiteSpace(prompt)">Send</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Default" OnClick="StopCurrentOperation" Disabled="!isBusy">Stop</MudButton>
+        </MudStack>
+
+        <MudStack Row="true" Spacing="1" Class="mt-2">
+            <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="ConnectAsync" Disabled="isBusy">Connect</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Warning" OnClick="ApprovePlan" Disabled="!hasPendingPlanApproval || isPlanApproved || isBusy">Approve</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="RejectPlan" Disabled="!hasPendingPlanApproval || isBusy">Reject</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Info" OnClick="ExecutePlanAsync" Disabled="!hasPendingPlanApproval || (!isPlanApproved && !awaitingStepApproval) || isBusy">@(awaitingStepApproval ? "Continue" : "Execute")</MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="StartNewChat" Disabled="runtime is null || isBusy">New Chat</MudButton>
+        </MudStack>
+
+        <MudStack Row="true" Spacing="1" Class="mt-2">
+            <MudSelect T="string" Label="Demo" @bind-Value="selectedDemoName" Disabled="isBusy" Dense="true" Style="min-width:280px;">
+                @foreach (var sample in demoSamples)
+                {
+                    <MudSelectItem T="string" Value="@sample.Name">@sample.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudButton Variant="Variant.Outlined" OnClick="RunSelectedDemoAsync" Disabled="isBusy || string.IsNullOrWhiteSpace(selectedDemoName)">Run Demo</MudButton>
+        </MudStack>
+    </MudItem>
+
+    <MudItem xs="12" md="4">
+        <MudPaper Class="pa-3" Outlined="true">
+            <MudText Typo="Typo.subtitle1">Settings</MudText>
+            <MudTextField Label="Ollama URL" @bind-Value="ollamaUrl" Variant="Variant.Outlined" Class="mt-2" />
+            <MudTextField Label="Model" @bind-Value="model" Variant="Variant.Outlined" Class="mt-2" />
+            <MudTextField Label="MCP Args" @bind-Value="mcpArgs" Variant="Variant.Outlined" Class="mt-2" />
+            <MudCheckBox @bind-Value="humanInLoop" Label="Human-in-the-loop" Class="mt-2" />
+
+            <MudText Typo="Typo.body2" Class="mt-2">MCP command: @GetDefaultMcpCommandPath()</MudText>
+
+            <InputFile OnChange="OnFileSelectedAsync" accept=".png,.jpg,.jpeg,.bmp,.webp" class="mt-2" />
+            @if (!string.IsNullOrWhiteSpace(selectedImageDataUrl))
+            {
+                <MudImage Src="@selectedImageDataUrl" Alt="preview" Style="width:100%;" Class="mt-2" />
+            }
+            <MudCheckBox @bind-Value="attachImage" Label="Attach image to prompt" Class="mt-2" />
+            <MudButton Variant="Variant.Outlined" Class="mt-2" OnClick="SendImageDecodePromptAsync" Disabled="runtime is null || string.IsNullOrWhiteSpace(selectedImagePath) || isBusy">Decode + Plan CAD Steps</MudButton>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    [Parameter] public EventCallback<string> OnStatusChanged { get; set; }
+
+    private static readonly JsonSerializerOptions PrettyJsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    private readonly List<(string Role, string Message)> logEntries = [];
+    private static readonly (string Name, string Prompt)[] demoSamples =
+    [
+        ("4-Bar Linkage", "Create a complete parametric 4-bar linkage mechanism using available MCP tools only. Include parts, assembly, mates, rebuild checks, and drawing output summary."),
+        ("Simple Box", "Create a simple box part using available MCP tools only: create part, sketch centered rectangle, extrude, then save."),
+        ("Parametric Cylinder", "Create a parametric cylinder using available MCP tools only: create part, sketch circle, extrude, and link dimensions via equation where supported.")
+    ];
+
+    private ChatRuntime? runtime;
+    private CancellationTokenSource? currentOperationCts;
+
+    private string prompt = string.Empty;
+    private string ollamaUrl = "http://localhost:11434";
+    private string model = "qwen2.5-coder:14b";
+    private string mcpArgs = string.Empty;
+    private string? selectedDemoName;
+
+    private string? selectedImagePath;
+    private string? selectedImageDataUrl;
+    private bool attachImage;
+    private bool humanInLoop;
+    private bool hasPendingPlanApproval;
+    private bool isPlanApproved;
+    private bool awaitingStepApproval;
+    private bool isBusy;
+
+    protected override void OnInitialized()
+    {
+        selectedDemoName = demoSamples.Length > 0 ? demoSamples[0].Name : null;
+        AppendLog("system", "Open Settings, connect, and the client will validate Ollama + MCP before chat starts.");
+        AppendLog("system", "Tip: Enter sends, Shift+Enter adds a line. Type /new to start a fresh chat.");
+    }
+
+    private async Task ConnectAsync()
+    {
+        if (isBusy)
+        {
+            return;
+        }
+
+        isBusy = true;
+        currentOperationCts = new CancellationTokenSource();
+        await OnStatusChanged.InvokeAsync("Status: connecting...");
+
+        try
+        {
+            var cancellationToken = currentOperationCts.Token;
+            var ollamaStatus = await OllamaClient.TestConnectionAsync(ollamaUrl.Trim(), model.Trim(), cancellationToken);
+            AppendLog("system", $"Ollama reachable. Discovered {ollamaStatus.AvailableModelCount} model(s).");
+
+            if (!ollamaStatus.IsModelAvailable)
+            {
+                AppendLog("error", $"Configured model '{model}' is not in Ollama tags.");
+            }
+
+            var mcpCommand = GetDefaultMcpCommandPath();
+            if (!File.Exists(mcpCommand))
+            {
+                throw new FileNotFoundException($"MCP executable was not found: {mcpCommand}");
+            }
+
+            runtime?.Dispose();
+            runtime = new ChatRuntime(new ChatSettings(ollamaUrl.Trim(), model.Trim(), mcpCommand, SplitCommandLine(mcpArgs.Trim())));
+            await runtime.InitializeAsync(cancellationToken);
+
+            var mcpStatus = await runtime.TestMcpConnectionAsync(cancellationToken);
+            AppendLog("system", $"MCP connected. {mcpStatus.ToolCount} tool(s) available.");
+            AppendLog("plan", $"Tool catalog: {FormatToolList(mcpStatus.ToolNames)}");
+
+            var warmup = await runtime.WarmupSolidWorksAsync(cancellationToken);
+            AppendLog(warmup.Succeeded ? "system" : "error", warmup.Message);
+            await OnStatusChanged.InvokeAsync(warmup.Succeeded ? "Status: connected + SolidWorks ready" : "Status: connected (warm-up skipped/failed)");
+        }
+        catch (Exception ex)
+        {
+            runtime?.Dispose();
+            runtime = null;
+            AppendLog("error", ex.Message);
+            await OnStatusChanged.InvokeAsync("Status: connection failed");
+        }
+        finally
+        {
+            currentOperationCts?.Dispose();
+            currentOperationCts = null;
+            isBusy = false;
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            return;
+        }
+
+        var text = prompt.Trim();
+        prompt = string.Empty;
+
+        if (text.Equals("/new", StringComparison.OrdinalIgnoreCase))
+        {
+            StartNewChat();
+            return;
+        }
+
+        if (awaitingStepApproval && await TryHandlePendingStepApprovalAsync(text))
+        {
+            return;
+        }
+
+        if (hasPendingPlanApproval)
+        {
+            if (await TryHandlePendingPlanCommandAsync(text))
+            {
+                return;
+            }
+
+            RejectPendingPlan("Previous plan discarded. Drafting a new plan from your updated request...");
+        }
+
+        await SendPromptAsync(text);
+    }
+
+    private async Task HandlePromptKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && args.ShiftKey != true)
+        {
+            await SendAsync();
+        }
+    }
+
+    private void StopCurrentOperation()
+    {
+        if (!isBusy || currentOperationCts is null)
+        {
+            return;
+        }
+
+        currentOperationCts.Cancel();
+        AppendLog("system", "Operation cancellation requested.");
+    }
+
+    private async Task RunSelectedDemoAsync()
+    {
+        if (string.IsNullOrWhiteSpace(selectedDemoName))
+        {
+            return;
+        }
+
+        foreach (var sample in demoSamples)
+        {
+            if (string.Equals(sample.Name, selectedDemoName, StringComparison.Ordinal))
+            {
+                prompt = sample.Prompt;
+                await SendAsync();
+                return;
+            }
+        }
+    }
+
+    private async Task SendPromptAsync(string userPrompt)
+    {
+        if (runtime is null)
+        {
+            AppendLog("system", "Not connected. Connect first.");
+            return;
+        }
+
+        isBusy = true;
+        currentOperationCts = new CancellationTokenSource();
+        var token = currentOperationCts.Token;
+
+        try
+        {
+            AppendLog("you", userPrompt);
+            var imageBase64 = attachImage && !string.IsNullOrWhiteSpace(selectedImagePath) && File.Exists(selectedImagePath)
+                ? Convert.ToBase64String(await File.ReadAllBytesAsync(selectedImagePath, token))
+                : null;
+
+            var plan = await runtime.ProposePlanAsync(userPrompt, imageBase64, token);
+            if (!plan.RequiresApproval)
+            {
+                AppendLog("assistant", plan.PlanSummary);
+                return;
+            }
+
+            AppendLog("plan", $"Proposed plan: {plan.PlanSummary}");
+            foreach (var call in plan.PlannedToolCalls)
+            {
+                AppendLog("plan", $"proposed> {call.Name}\n{FormatHumanReadableJson(call.Arguments)}");
+            }
+
+            hasPendingPlanApproval = true;
+            isPlanApproved = false;
+            AppendLog("system", "Plan ready. Approve or reject, then execute.");
+        }
+        catch (Exception ex)
+        {
+            RejectPendingPlan(ex.Message, "error");
+        }
+        finally
+        {
+            currentOperationCts?.Dispose();
+            currentOperationCts = null;
+            isBusy = false;
+        }
+    }
+
+    private void ApprovePlan()
+    {
+        if (!hasPendingPlanApproval)
+        {
+            return;
+        }
+
+        isPlanApproved = true;
+        AppendLog("system", "Plan approved.");
+    }
+
+    private void RejectPlan() => RejectPendingPlan("Plan rejected.");
+
+    private async Task ExecutePlanAsync()
+    {
+        if (runtime is null || !hasPendingPlanApproval || (!isPlanApproved && !awaitingStepApproval))
+        {
+            return;
+        }
+
+        isBusy = true;
+        currentOperationCts = new CancellationTokenSource();
+
+        try
+        {
+            var result = await runtime.ExecuteApprovedPlanAsync(humanInLoop, currentOperationCts.Token);
+            foreach (var progress in result.ProgressUpdates)
+            {
+                AppendLog("plan", progress);
+            }
+
+            foreach (var tool in result.ToolCalls)
+            {
+                AppendLog(tool.Succeeded ? "tool" : "error", $"[{tool.StepNumber}/{tool.TotalSteps}] {tool.Name}\n{FormatHumanReadableJson(tool.Result)}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.FeedbackImagePath) && File.Exists(result.FeedbackImagePath))
+            {
+                selectedImagePath = result.FeedbackImagePath;
+                var bytes = await File.ReadAllBytesAsync(result.FeedbackImagePath, currentOperationCts.Token);
+                var mediaType = result.FeedbackMediaType ?? "image/png";
+                selectedImageDataUrl = $"data:{mediaType};base64,{Convert.ToBase64String(bytes)}";
+            }
+
+            if (result.AwaitingHumanApproval)
+            {
+                awaitingStepApproval = true;
+                AppendLog("system", result.HumanApprovalPrompt ?? result.FinalResponse);
+            }
+            else
+            {
+                awaitingStepApproval = false;
+                AppendLog("assistant", result.FinalResponse);
+            }
+
+            if (!result.StoppedOnFirstFailure && !result.AwaitingHumanApproval)
+            {
+                hasPendingPlanApproval = false;
+                isPlanApproved = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            RejectPendingPlan($"Execution failed: {ex.Message}", "error");
+        }
+        finally
+        {
+            currentOperationCts?.Dispose();
+            currentOperationCts = null;
+            isBusy = false;
+        }
+    }
+
+    private async Task<bool> TryHandlePendingPlanCommandAsync(string commandText)
+    {
+        if (commandText.Equals("/reject", StringComparison.OrdinalIgnoreCase))
+        {
+            RejectPendingPlan("Plan rejected.");
+            return true;
+        }
+
+        if (commandText.Equals("/approve", StringComparison.OrdinalIgnoreCase))
+        {
+            ApprovePlan();
+            return true;
+        }
+
+        if (commandText.Equals("/execute", StringComparison.OrdinalIgnoreCase))
+        {
+            await ExecutePlanAsync();
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task<bool> TryHandlePendingStepApprovalAsync(string commandText)
+    {
+        var normalized = commandText.Trim().ToLowerInvariant();
+        var yes = normalized is "y" or "yes" or "ok" or "okay" or "continue" or "go" or "resume" or "proceed";
+        if (!yes)
+        {
+            return false;
+        }
+
+        awaitingStepApproval = false;
+        await ExecutePlanAsync();
+        return true;
+    }
+
+    private void StartNewChat()
+    {
+        if (runtime is null)
+        {
+            return;
+        }
+
+        runtime.ResetConversation();
+        hasPendingPlanApproval = false;
+        isPlanApproved = false;
+        awaitingStepApproval = false;
+        AppendLog("system", "Started a new chat.");
+    }
+
+    private async Task SendImageDecodePromptAsync()
+    {
+        if (runtime is null || string.IsNullOrWhiteSpace(selectedImagePath) || !File.Exists(selectedImagePath))
+        {
+            AppendLog("system", "Select an image first.");
+            return;
+        }
+
+        const string decodePrompt = "Analyze this screenshot or image for SolidWorks/CAD intent, identify visible failures or missing features, propose exact recovery steps, and suggest any scope changes, dimensions, constraints, BOM candidates, and drawing views required. After analysis, use tools where possible to continue model creation.";
+        await SendPromptAsync(decodePrompt);
+    }
+
+    private async Task OnFileSelectedAsync(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        var extension = Path.GetExtension(file.Name);
+        var targetPath = Path.Combine(Path.GetTempPath(), $"autoworks-upload-{Guid.NewGuid():N}{extension}");
+
+        await using var source = file.OpenReadStream(15 * 1024 * 1024);
+        await using var destination = File.Create(targetPath);
+        await source.CopyToAsync(destination);
+
+        selectedImagePath = targetPath;
+        var bytes = await File.ReadAllBytesAsync(targetPath);
+        var mediaType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/png" : file.ContentType;
+        selectedImageDataUrl = $"data:{mediaType};base64,{Convert.ToBase64String(bytes)}";
+        AppendLog("system", $"Selected image: {file.Name}");
+    }
+
+    private void RejectPendingPlan(string message, string role = "system")
+    {
+        runtime?.RejectPendingPlan();
+        hasPendingPlanApproval = false;
+        isPlanApproved = false;
+        awaitingStepApproval = false;
+        AppendLog(role, message);
+    }
+
+    private void AppendLog(string role, string message)
+    {
+        logEntries.Add((role, FormatHumanReadableJson(message)));
+        InvokeAsync(StateHasChanged);
+    }
+
+    private static Color GetColor(string role) => role switch
+    {
+        "you" => Color.Info,
+        "assistant" => Color.Default,
+        "tool" => Color.Warning,
+        "plan" => Color.Secondary,
+        "error" => Color.Error,
+        _ => Color.Success,
+    };
+
+    private static string FormatToolList(IReadOnlyList<string> toolNames)
+    {
+        if (toolNames.Count == 0)
+        {
+            return "No tools returned by MCP.";
+        }
+
+        const int maxVisibleTools = 12;
+        var builder = new StringBuilder();
+        var count = Math.Min(maxVisibleTools, toolNames.Count);
+
+        for (var index = 0; index < count; index++)
+        {
+            if (index > 0)
+            {
+                builder.Append(", ");
+            }
+
+            builder.Append(toolNames[index]);
+        }
+
+        if (toolNames.Count > maxVisibleTools)
+        {
+            builder.Append($", ... (+{toolNames.Count - maxVisibleTools} more)");
+        }
+
+        return builder.ToString();
+    }
+
+    private static string[] SplitCommandLine(string commandLine)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return [];
+        }
+
+        var args = new List<string>();
+        var current = new StringBuilder();
+        var inQuotes = false;
+
+        foreach (var ch in commandLine)
+        {
+            if (ch == '"')
+            {
+                inQuotes = !inQuotes;
+                continue;
+            }
+
+            if (char.IsWhiteSpace(ch) && !inQuotes)
+            {
+                if (current.Length > 0)
+                {
+                    args.Add(current.ToString());
+                    current.Clear();
+                }
+
+                continue;
+            }
+
+            current.Append(ch);
+        }
+
+        if (current.Length > 0)
+        {
+            args.Add(current.ToString());
+        }
+
+        return [.. args];
+    }
+
+    private static string GetDefaultMcpCommandPath()
+    {
+        var configuredPath = Environment.GetEnvironmentVariable("SOLIDWORKS_MCP_COMMAND");
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            return Path.GetFullPath(configuredPath);
+        }
+
+        var appFolderPath = Path.Combine(AppContext.BaseDirectory, "SolidworksMCP.exe");
+
+#if DEBUG
+        if (Debugger.IsAttached)
+        {
+            var solutionBuildPath = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "SolidworksMCP",
+                "bin",
+                "Debug",
+                "net9.0",
+                "SolidworksMCP.exe"));
+
+            if (File.Exists(solutionBuildPath))
+            {
+                return solutionBuildPath;
+            }
+        }
+#endif
+
+        return appFolderPath;
+    }
+
+    private static string FormatHumanReadableJson(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return message;
+        }
+
+        var trimmed = message.Trim();
+
+        if (trimmed.StartsWith("```json", StringComparison.OrdinalIgnoreCase) && trimmed.EndsWith("```", StringComparison.Ordinal))
+        {
+            trimmed = trimmed[7..^3].Trim();
+        }
+
+        if (!((trimmed.StartsWith('{') && trimmed.EndsWith('}')) || (trimmed.StartsWith('[') && trimmed.EndsWith(']'))))
+        {
+            return message;
+        }
+
+        try
+        {
+            using var json = JsonDocument.Parse(trimmed);
+            return JsonSerializer.Serialize(json.RootElement, PrettyJsonOptions);
+        }
+        catch (JsonException)
+        {
+            return message;
+        }
+    }
+
+    public void Dispose()
+    {
+        currentOperationCts?.Cancel();
+        currentOperationCts?.Dispose();
+        runtime?.Dispose();
+    }
+}

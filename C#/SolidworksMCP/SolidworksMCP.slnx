@@ -34,8 +34,6 @@
     </Project>
   </Folder>
   <Project Path="../AutoWorks/AutoWorks.csproj" />
-  <Project Path="../SolidworksChatClient.Tests/SolidworksChatClient.Tests.csproj" />
-  <Project Path="../SolidworksChatClient/SolidworksChatClient.csproj" />
   <Project Path="../SolidworksMCP.Tests/SolidworksMCP.Tests.csproj" />
   <Project Path="SolidworksMCP.csproj" />`r`n  `r`n</Solution>
 

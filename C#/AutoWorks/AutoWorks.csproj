@@ -3,21 +3,47 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <StartupObject>AutoWorks.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Remove=".template.config\**" />
-    <None Remove=".template.config\**" />
-    <None Remove="MyTemplate.vstemplate" />
+    <ProjectReference Include="..\SolidworksMCP\SolidworksMCP.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" Version="2.3.0" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.WindowsForms" Version="9.0.0" />
-    <PackageReference Include="MudBlazor" Version="8.*" />
+    <PackageReference Include="MudBlazor" Version="9.*" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <McpExeName>SolidworksMCP.exe</McpExeName>
+    <McpSourceDirectory>$(MSBuildProjectDirectory)\..\SolidworksMCP\bin\$(Configuration)\net9.0\</McpSourceDirectory>
+  </PropertyGroup>
+
+  <Target Name="CopyMcpRuntimeToOutput" AfterTargets="Build">
+    <ItemGroup>
+      <McpRuntimeFiles Include="$(McpSourceDirectory)*" Condition="Exists('$(McpSourceDirectory)')" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(McpRuntimeFiles)"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true"
+          Condition="@(McpRuntimeFiles) != ''" />
+  </Target>
+
+  <Target Name="CopyMcpRuntimeToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <McpRuntimeFiles Include="$(McpSourceDirectory)*" Condition="Exists('$(McpSourceDirectory)')" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(McpRuntimeFiles)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="@(McpRuntimeFiles) != ''" />
+  </Target>
 
 </Project>
