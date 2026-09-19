@@ -40,7 +40,11 @@ public sealed record SelectionSpec
 
     public IReadOnlyList<int>? SketchSegments { get; init; }
 
+    public IReadOnlyList<string>? SketchSegmentHandles { get; init; }
+
     public IReadOnlyList<int>? SketchPoints { get; init; }
+
+    public IReadOnlyList<string>? SketchPointHandles { get; init; }
 
     public string? SketchName { get; init; }
 

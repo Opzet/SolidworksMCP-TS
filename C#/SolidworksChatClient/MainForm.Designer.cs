@@ -25,6 +25,7 @@ partial class MainForm
 
     private Label imagePathLabel;
     private CheckBox attachImageCheckBox;
+    private CheckBox humanInLoopCheckBox;
     private Button uploadButton;
     private Button decodeImageButton;
     private Button demoButton;
@@ -67,6 +68,7 @@ partial class MainForm
         uploadButton = new Button( );
         imagePathLabel = new Label( );
         attachImageCheckBox = new CheckBox( );
+        humanInLoopCheckBox = new CheckBox( );
         imagePreview = new PictureBox( );
         decodeImageButton = new Button( );
         demoButton = new Button( );
@@ -105,17 +107,18 @@ partial class MainForm
         // 
         rootLayout.BackColor = Color.FromArgb(  27,   30,   36);
         rootLayout.ColumnCount = 1;
-        rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 20F));
+        rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 29F));
         rootLayout.Controls.Add(headerPanel, 0, 0);
         rootLayout.Controls.Add(mainTabs, 0, 1);
         rootLayout.Dock = DockStyle.Fill;
         rootLayout.Location = new Point(0, 0);
+        rootLayout.Margin = new Padding(4, 5, 4, 5);
         rootLayout.Name = "rootLayout";
-        rootLayout.Padding = new Padding(12);
+        rootLayout.Padding = new Padding(17, 20, 17, 20);
         rootLayout.RowCount = 2;
         rootLayout.RowStyles.Add(new RowStyle( ));
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        rootLayout.Size = new Size(1280, 860);
+        rootLayout.Size = new Size(1829, 1433);
         rootLayout.TabIndex = 0;
         // 
         // headerPanel
@@ -125,11 +128,11 @@ partial class MainForm
         headerPanel.Controls.Add(statusLabel);
         headerPanel.Controls.Add(btnLaunchSolidoworksAndTestConnection);
         headerPanel.Dock = DockStyle.Top;
-        headerPanel.Location = new Point(12, 12);
-        headerPanel.Margin = new Padding(0, 0, 0, 10);
+        headerPanel.Location = new Point(17, 20);
+        headerPanel.Margin = new Padding(0, 0, 0, 17);
         headerPanel.Name = "headerPanel";
-        headerPanel.Padding = new Padding(12, 10, 12, 10);
-        headerPanel.Size = new Size(1256, 46);
+        headerPanel.Padding = new Padding(17);
+        headerPanel.Size = new Size(1795, 77);
         headerPanel.TabIndex = 0;
         // 
         // appTitleLabel
@@ -137,9 +140,10 @@ partial class MainForm
         appTitleLabel.AutoSize = true;
         appTitleLabel.Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold);
         appTitleLabel.ForeColor = Color.Gainsboro;
-        appTitleLabel.Location = new Point(12, 12);
+        appTitleLabel.Location = new Point(17, 20);
+        appTitleLabel.Margin = new Padding(4, 0, 4, 0);
         appTitleLabel.Name = "appTitleLabel";
-        appTitleLabel.Size = new Size(176, 20);
+        appTitleLabel.Size = new Size(256, 30);
         appTitleLabel.TabIndex = 0;
         appTitleLabel.Text = "SolidWorks Orchestrator";
         // 
@@ -148,9 +152,10 @@ partial class MainForm
         statusLabel.Anchor =  AnchorStyles.Top | AnchorStyles.Right;
         statusLabel.AutoSize = true;
         statusLabel.ForeColor = Color.Gainsboro;
-        statusLabel.Location = new Point(2136, 14);
+        statusLabel.Location = new Point(3052, 23);
+        statusLabel.Margin = new Padding(4, 0, 4, 0);
         statusLabel.Name = "statusLabel";
-        statusLabel.Size = new Size(116, 15);
+        statusLabel.Size = new Size(174, 25);
         statusLabel.TabIndex = 1;
         statusLabel.Text = "Status: disconnected";
         // 
@@ -161,11 +166,11 @@ partial class MainForm
         btnLaunchSolidoworksAndTestConnection.FlatAppearance.BorderSize = 0;
         btnLaunchSolidoworksAndTestConnection.FlatStyle = FlatStyle.Flat;
         btnLaunchSolidoworksAndTestConnection.ForeColor = Color.White;
-        btnLaunchSolidoworksAndTestConnection.Location = new Point(1041, 7);
-        btnLaunchSolidoworksAndTestConnection.Margin = new Padding(0, 12, 0, 0);
+        btnLaunchSolidoworksAndTestConnection.Location = new Point(1487, 12);
+        btnLaunchSolidoworksAndTestConnection.Margin = new Padding(0, 20, 0, 0);
         btnLaunchSolidoworksAndTestConnection.Name = "btnLaunchSolidoworksAndTestConnection";
-        btnLaunchSolidoworksAndTestConnection.Padding = new Padding(12, 6, 12, 6);
-        btnLaunchSolidoworksAndTestConnection.Size = new Size(212, 37);
+        btnLaunchSolidoworksAndTestConnection.Padding = new Padding(17, 10, 17, 10);
+        btnLaunchSolidoworksAndTestConnection.Size = new Size(303, 78);
         btnLaunchSolidoworksAndTestConnection.TabIndex = 6;
         btnLaunchSolidoworksAndTestConnection.Text = "Warm up Solidworks";
         btnLaunchSolidoworksAndTestConnection.UseVisualStyleBackColor = false;
@@ -177,21 +182,23 @@ partial class MainForm
         mainTabs.Controls.Add(settingsTab);
         mainTabs.Dock = DockStyle.Fill;
         mainTabs.Font = new Font("Segoe UI", 9F);
-        mainTabs.Location = new Point(15, 71);
+        mainTabs.Location = new Point(21, 119);
+        mainTabs.Margin = new Padding(4, 5, 4, 5);
         mainTabs.Name = "mainTabs";
         mainTabs.Padding = new Point(14, 6);
         mainTabs.SelectedIndex = 0;
-        mainTabs.Size = new Size(1250, 774);
+        mainTabs.Size = new Size(1787, 1289);
         mainTabs.TabIndex = 1;
         // 
         // workspaceTab
         // 
         workspaceTab.BackColor = Color.FromArgb(  27,   30,   36);
         workspaceTab.Controls.Add(workspaceLayout);
-        workspaceTab.Location = new Point(4, 30);
+        workspaceTab.Location = new Point(4, 40);
+        workspaceTab.Margin = new Padding(4, 5, 4, 5);
         workspaceTab.Name = "workspaceTab";
-        workspaceTab.Padding = new Padding(8);
-        workspaceTab.Size = new Size(1242, 740);
+        workspaceTab.Padding = new Padding(11, 13, 11, 13);
+        workspaceTab.Size = new Size(1779, 1245);
         workspaceTab.TabIndex = 0;
         workspaceTab.Text = "Workspace";
         // 
@@ -199,23 +206,25 @@ partial class MainForm
         // 
         workspaceLayout.BackColor = Color.FromArgb(  27,   30,   36);
         workspaceLayout.ColumnCount = 1;
-        workspaceLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 20F));
+        workspaceLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1751F));
         workspaceLayout.Controls.Add(chatSplit, 0, 0);
         workspaceLayout.Controls.Add(inputPanel, 0, 1);
         workspaceLayout.Dock = DockStyle.Fill;
-        workspaceLayout.Location = new Point(8, 8);
+        workspaceLayout.Location = new Point(11, 13);
+        workspaceLayout.Margin = new Padding(4, 5, 4, 5);
         workspaceLayout.Name = "workspaceLayout";
         workspaceLayout.RowCount = 2;
         workspaceLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         workspaceLayout.RowStyles.Add(new RowStyle( ));
-        workspaceLayout.Size = new Size(1226, 724);
+        workspaceLayout.Size = new Size(1757, 1219);
         workspaceLayout.TabIndex = 0;
         // 
         // chatSplit
         // 
         chatSplit.BackColor = Color.FromArgb(  27,   30,   36);
         chatSplit.Dock = DockStyle.Fill;
-        chatSplit.Location = new Point(3, 3);
+        chatSplit.Location = new Point(4, 5);
+        chatSplit.Margin = new Padding(4, 5, 4, 5);
         chatSplit.Name = "chatSplit";
         // 
         // chatSplit.Panel1
@@ -227,8 +236,9 @@ partial class MainForm
         // 
         chatSplit.Panel2.Controls.Add(rightPanel);
         chatSplit.Panel2MinSize = 220;
-        chatSplit.Size = new Size(1220, 610);
-        chatSplit.SplitterDistance = 984;
+        chatSplit.Size = new Size(1749, 1029);
+        chatSplit.SplitterDistance = 1410;
+        chatSplit.SplitterWidth = 6;
         chatSplit.TabIndex = 0;
         // 
         // chatLog
@@ -239,9 +249,10 @@ partial class MainForm
         chatLog.Font = new Font("Consolas", 10.5F);
         chatLog.ForeColor = Color.Gainsboro;
         chatLog.Location = new Point(0, 0);
+        chatLog.Margin = new Padding(4, 5, 4, 5);
         chatLog.Name = "chatLog";
         chatLog.ReadOnly = true;
-        chatLog.Size = new Size(984, 610);
+        chatLog.Size = new Size(1410, 1029);
         chatLog.TabIndex = 0;
         chatLog.Text = "";
         // 
@@ -249,27 +260,30 @@ partial class MainForm
         // 
         rightPanel.BackColor = Color.FromArgb(  37,   41,   48);
         rightPanel.ColumnCount = 1;
-        rightPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 20F));
+        rightPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 303F));
         rightPanel.Controls.Add(uploadButton, 0, 0);
         rightPanel.Controls.Add(imagePathLabel, 0, 1);
         rightPanel.Controls.Add(attachImageCheckBox, 0, 2);
-        rightPanel.Controls.Add(imagePreview, 0, 3);
-        rightPanel.Controls.Add(decodeImageButton, 0, 4);
-        rightPanel.Controls.Add(demoButton, 0, 5);
-        rightPanel.Controls.Add(comboBox1, 0, 6);
+        rightPanel.Controls.Add(humanInLoopCheckBox, 0, 3);
+        rightPanel.Controls.Add(imagePreview, 0, 4);
+        rightPanel.Controls.Add(decodeImageButton, 0, 5);
+        rightPanel.Controls.Add(demoButton, 0, 6);
+        rightPanel.Controls.Add(comboBox1, 0, 7);
         rightPanel.Dock = DockStyle.Fill;
         rightPanel.Location = new Point(0, 0);
+        rightPanel.Margin = new Padding(4, 5, 4, 5);
         rightPanel.Name = "rightPanel";
-        rightPanel.Padding = new Padding(10);
-        rightPanel.RowCount = 7;
-        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 58F));
+        rightPanel.Padding = new Padding(14, 17, 14, 17);
+        rightPanel.RowCount = 8;
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 97F));
+        rightPanel.RowStyles.Add(new RowStyle( ));
         rightPanel.RowStyles.Add(new RowStyle( ));
         rightPanel.RowStyles.Add(new RowStyle( ));
         rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45F));
-        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45F));
-        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45F));
-        rightPanel.Size = new Size(232, 610);
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 75F));
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 75F));
+        rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 75F));
+        rightPanel.Size = new Size(333, 1029);
         rightPanel.TabIndex = 0;
         // 
         // uploadButton
@@ -280,10 +294,11 @@ partial class MainForm
         uploadButton.FlatAppearance.BorderSize = 0;
         uploadButton.FlatStyle = FlatStyle.Flat;
         uploadButton.ForeColor = Color.White;
-        uploadButton.Location = new Point(13, 13);
+        uploadButton.Location = new Point(18, 22);
+        uploadButton.Margin = new Padding(4, 5, 4, 5);
         uploadButton.Name = "uploadButton";
-        uploadButton.Padding = new Padding(8, 5, 8, 5);
-        uploadButton.Size = new Size(206, 52);
+        uploadButton.Padding = new Padding(11, 8, 11, 8);
+        uploadButton.Size = new Size(297, 87);
         uploadButton.TabIndex = 0;
         uploadButton.Text = "Upload Image";
         uploadButton.UseVisualStyleBackColor = false;
@@ -294,9 +309,10 @@ partial class MainForm
         imagePathLabel.AutoEllipsis = true;
         imagePathLabel.AutoSize = true;
         imagePathLabel.ForeColor = Color.Gainsboro;
-        imagePathLabel.Location = new Point(13, 68);
+        imagePathLabel.Location = new Point(18, 114);
+        imagePathLabel.Margin = new Padding(4, 0, 4, 0);
         imagePathLabel.Name = "imagePathLabel";
-        imagePathLabel.Size = new Size(105, 15);
+        imagePathLabel.Size = new Size(159, 25);
         imagePathLabel.TabIndex = 1;
         imagePathLabel.Text = "No image selected";
         // 
@@ -307,21 +323,36 @@ partial class MainForm
         attachImageCheckBox.Checked = true;
         attachImageCheckBox.CheckState = CheckState.Checked;
         attachImageCheckBox.ForeColor = Color.Gainsboro;
-        attachImageCheckBox.Location = new Point(13, 86);
+        attachImageCheckBox.Location = new Point(18, 144);
+        attachImageCheckBox.Margin = new Padding(4, 5, 4, 5);
         attachImageCheckBox.Name = "attachImageCheckBox";
-        attachImageCheckBox.Size = new Size(179, 19);
+        attachImageCheckBox.Size = new Size(269, 29);
         attachImageCheckBox.TabIndex = 2;
         attachImageCheckBox.Text = "Attach image to next prompt";
         attachImageCheckBox.UseVisualStyleBackColor = false;
+        // 
+        // humanInLoopCheckBox
+        // 
+        humanInLoopCheckBox.AutoSize = true;
+        humanInLoopCheckBox.BackColor = Color.Transparent;
+        humanInLoopCheckBox.ForeColor = Color.Gainsboro;
+        humanInLoopCheckBox.Location = new Point(18, 183);
+        humanInLoopCheckBox.Margin = new Padding(4, 5, 4, 5);
+        humanInLoopCheckBox.Name = "humanInLoopCheckBox";
+        humanInLoopCheckBox.Size = new Size(248, 29);
+        humanInLoopCheckBox.TabIndex = 3;
+        humanInLoopCheckBox.Text = "Validate each step with me";
+        humanInLoopCheckBox.UseVisualStyleBackColor = false;
         // 
         // imagePreview
         // 
         imagePreview.BackColor = Color.FromArgb(  19,   21,   27);
         imagePreview.BorderStyle = BorderStyle.FixedSingle;
         imagePreview.Dock = DockStyle.Fill;
-        imagePreview.Location = new Point(13, 111);
+        imagePreview.Location = new Point(18, 222);
+        imagePreview.Margin = new Padding(4, 5, 4, 5);
         imagePreview.Name = "imagePreview";
-        imagePreview.Size = new Size(206, 351);
+        imagePreview.Size = new Size(297, 560);
         imagePreview.SizeMode = PictureBoxSizeMode.Zoom;
         imagePreview.TabIndex = 3;
         imagePreview.TabStop = false;
@@ -333,11 +364,11 @@ partial class MainForm
         decodeImageButton.FlatAppearance.BorderSize = 0;
         decodeImageButton.FlatStyle = FlatStyle.Flat;
         decodeImageButton.ForeColor = Color.White;
-        decodeImageButton.Location = new Point(10, 473);
-        decodeImageButton.Margin = new Padding(0, 8, 0, 0);
+        decodeImageButton.Location = new Point(14, 800);
+        decodeImageButton.Margin = new Padding(0, 13, 0, 0);
         decodeImageButton.Name = "decodeImageButton";
-        decodeImageButton.Padding = new Padding(8, 6, 8, 6);
-        decodeImageButton.Size = new Size(212, 37);
+        decodeImageButton.Padding = new Padding(11, 10, 11, 10);
+        decodeImageButton.Size = new Size(305, 62);
         decodeImageButton.TabIndex = 4;
         decodeImageButton.Text = "Decode + Plan CAD Steps";
         decodeImageButton.UseVisualStyleBackColor = false;
@@ -350,11 +381,11 @@ partial class MainForm
         demoButton.FlatAppearance.BorderSize = 0;
         demoButton.FlatStyle = FlatStyle.Flat;
         demoButton.ForeColor = Color.White;
-        demoButton.Location = new Point(10, 518);
-        demoButton.Margin = new Padding(0, 8, 0, 0);
+        demoButton.Location = new Point(14, 875);
+        demoButton.Margin = new Padding(0, 13, 0, 0);
         demoButton.Name = "demoButton";
-        demoButton.Padding = new Padding(8, 6, 8, 6);
-        demoButton.Size = new Size(212, 37);
+        demoButton.Padding = new Padding(11, 10, 11, 10);
+        demoButton.Size = new Size(305, 62);
         demoButton.TabIndex = 5;
         demoButton.Text = "Demo:";
         demoButton.UseVisualStyleBackColor = false;
@@ -363,9 +394,10 @@ partial class MainForm
         // 
         comboBox1.Dock = DockStyle.Fill;
         comboBox1.FormattingEnabled = true;
-        comboBox1.Location = new Point(13, 558);
+        comboBox1.Location = new Point(18, 942);
+        comboBox1.Margin = new Padding(4, 5, 4, 5);
         comboBox1.Name = "comboBox1";
-        comboBox1.Size = new Size(206, 23);
+        comboBox1.Size = new Size(297, 33);
         comboBox1.TabIndex = 6;
         // 
         // inputPanel
@@ -385,13 +417,13 @@ partial class MainForm
         inputPanel.Controls.Add(rejectPlanButton, 4, 0);
         inputPanel.Controls.Add(executePlanButton, 5, 0);
         inputPanel.Dock = DockStyle.Bottom;
-        inputPanel.Location = new Point(0, 626);
-        inputPanel.Margin = new Padding(0, 10, 0, 0);
+        inputPanel.Location = new Point(0, 1056);
+        inputPanel.Margin = new Padding(0, 17, 0, 0);
         inputPanel.Name = "inputPanel";
-        inputPanel.Padding = new Padding(10);
+        inputPanel.Padding = new Padding(14, 17, 14, 17);
         inputPanel.RowCount = 1;
-        inputPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
-        inputPanel.Size = new Size(1226, 98);
+        inputPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 130F));
+        inputPanel.Size = new Size(1757, 163);
         inputPanel.TabIndex = 1;
         // 
         // inputBox
@@ -401,11 +433,12 @@ partial class MainForm
         inputBox.Dock = DockStyle.Fill;
         inputBox.Font = new Font("Segoe UI", 10F);
         inputBox.ForeColor = Color.Gainsboro;
-        inputBox.Location = new Point(13, 13);
+        inputBox.Location = new Point(18, 22);
+        inputBox.Margin = new Padding(4, 5, 4, 5);
         inputBox.Multiline = true;
         inputBox.Name = "inputBox";
         inputBox.ScrollBars = ScrollBars.Vertical;
-        inputBox.Size = new Size(625, 72);
+        inputBox.Size = new Size(901, 120);
         inputBox.TabIndex = 0;
         // 
         // sendButton
@@ -415,11 +448,11 @@ partial class MainForm
         sendButton.FlatAppearance.BorderSize = 0;
         sendButton.FlatStyle = FlatStyle.Flat;
         sendButton.ForeColor = Color.White;
-        sendButton.Location = new Point(651, 10);
-        sendButton.Margin = new Padding(10, 0, 0, 0);
+        sendButton.Location = new Point(937, 17);
+        sendButton.Margin = new Padding(14, 0, 0, 0);
         sendButton.Name = "sendButton";
-        sendButton.Padding = new Padding(8, 6, 8, 6);
-        sendButton.Size = new Size(120, 78);
+        sendButton.Padding = new Padding(11, 10, 11, 10);
+        sendButton.Size = new Size(171, 130);
         sendButton.TabIndex = 1;
         sendButton.Text = "Send";
         sendButton.UseVisualStyleBackColor = false;
@@ -433,11 +466,11 @@ partial class MainForm
         stopButton.FlatAppearance.BorderSize = 0;
         stopButton.FlatStyle = FlatStyle.Flat;
         stopButton.ForeColor = Color.White;
-        stopButton.Location = new Point(781, 10);
-        stopButton.Margin = new Padding(10, 0, 0, 0);
+        stopButton.Location = new Point(1122, 17);
+        stopButton.Margin = new Padding(14, 0, 0, 0);
         stopButton.Name = "stopButton";
-        stopButton.Padding = new Padding(8, 6, 8, 6);
-        stopButton.Size = new Size(120, 78);
+        stopButton.Padding = new Padding(11, 10, 11, 10);
+        stopButton.Size = new Size(171, 130);
         stopButton.TabIndex = 2;
         stopButton.Text = "Stop";
         stopButton.UseVisualStyleBackColor = false;
@@ -451,11 +484,11 @@ partial class MainForm
         approvePlanButton.FlatAppearance.BorderSize = 0;
         approvePlanButton.FlatStyle = FlatStyle.Flat;
         approvePlanButton.ForeColor = Color.White;
-        approvePlanButton.Location = new Point(911, 10);
-        approvePlanButton.Margin = new Padding(10, 0, 0, 0);
+        approvePlanButton.Location = new Point(1307, 17);
+        approvePlanButton.Margin = new Padding(14, 0, 0, 0);
         approvePlanButton.Name = "approvePlanButton";
-        approvePlanButton.Padding = new Padding(8, 6, 8, 6);
-        approvePlanButton.Size = new Size(95, 78);
+        approvePlanButton.Padding = new Padding(11, 10, 11, 10);
+        approvePlanButton.Size = new Size(136, 130);
         approvePlanButton.TabIndex = 3;
         approvePlanButton.Text = "Approve";
         approvePlanButton.UseVisualStyleBackColor = false;
@@ -469,11 +502,11 @@ partial class MainForm
         rejectPlanButton.FlatAppearance.BorderSize = 0;
         rejectPlanButton.FlatStyle = FlatStyle.Flat;
         rejectPlanButton.ForeColor = Color.White;
-        rejectPlanButton.Location = new Point(1016, 10);
-        rejectPlanButton.Margin = new Padding(10, 0, 0, 0);
+        rejectPlanButton.Location = new Point(1457, 17);
+        rejectPlanButton.Margin = new Padding(14, 0, 0, 0);
         rejectPlanButton.Name = "rejectPlanButton";
-        rejectPlanButton.Padding = new Padding(8, 6, 8, 6);
-        rejectPlanButton.Size = new Size(95, 78);
+        rejectPlanButton.Padding = new Padding(11, 10, 11, 10);
+        rejectPlanButton.Size = new Size(136, 130);
         rejectPlanButton.TabIndex = 4;
         rejectPlanButton.Text = "Reject";
         rejectPlanButton.UseVisualStyleBackColor = false;
@@ -487,11 +520,11 @@ partial class MainForm
         executePlanButton.FlatAppearance.BorderSize = 0;
         executePlanButton.FlatStyle = FlatStyle.Flat;
         executePlanButton.ForeColor = Color.White;
-        executePlanButton.Location = new Point(1121, 10);
-        executePlanButton.Margin = new Padding(10, 0, 0, 0);
+        executePlanButton.Location = new Point(1607, 17);
+        executePlanButton.Margin = new Padding(14, 0, 0, 0);
         executePlanButton.Name = "executePlanButton";
-        executePlanButton.Padding = new Padding(8, 6, 8, 6);
-        executePlanButton.Size = new Size(95, 78);
+        executePlanButton.Padding = new Padding(11, 10, 11, 10);
+        executePlanButton.Size = new Size(136, 130);
         executePlanButton.TabIndex = 5;
         executePlanButton.Text = "Execute";
         executePlanButton.UseVisualStyleBackColor = false;
@@ -501,10 +534,11 @@ partial class MainForm
         // 
         settingsTab.BackColor = Color.FromArgb(  27,   30,   36);
         settingsTab.Controls.Add(settingsLayout);
-        settingsTab.Location = new Point(4, 30);
+        settingsTab.Location = new Point(4, 40);
+        settingsTab.Margin = new Padding(4, 5, 4, 5);
         settingsTab.Name = "settingsTab";
-        settingsTab.Padding = new Padding(16);
-        settingsTab.Size = new Size(1242, 740);
+        settingsTab.Padding = new Padding(23, 27, 23, 27);
+        settingsTab.Size = new Size(1779, 1245);
         settingsTab.TabIndex = 1;
         settingsTab.Text = "Settings";
         // 
@@ -513,7 +547,7 @@ partial class MainForm
         settingsLayout.AutoSize = true;
         settingsLayout.BackColor = Color.FromArgb(  37,   41,   48);
         settingsLayout.ColumnCount = 2;
-        settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190F));
+        settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 271F));
         settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         settingsLayout.Controls.Add(modelBox, 1, 1);
         settingsLayout.Controls.Add(mcpArgsBox, 1, 2);
@@ -521,50 +555,55 @@ partial class MainForm
         settingsLayout.Controls.Add(ollamaUrlBox, 1, 0);
         settingsLayout.Controls.Add(connectButton, 0, 0);
         settingsLayout.Dock = DockStyle.Top;
-        settingsLayout.Location = new Point(16, 16);
+        settingsLayout.Location = new Point(23, 27);
+        settingsLayout.Margin = new Padding(4, 5, 4, 5);
         settingsLayout.Name = "settingsLayout";
-        settingsLayout.Padding = new Padding(16);
+        settingsLayout.Padding = new Padding(23, 27, 23, 27);
         settingsLayout.RowCount = 5;
         settingsLayout.RowStyles.Add(new RowStyle( ));
         settingsLayout.RowStyles.Add(new RowStyle( ));
         settingsLayout.RowStyles.Add(new RowStyle( ));
         settingsLayout.RowStyles.Add(new RowStyle( ));
         settingsLayout.RowStyles.Add(new RowStyle( ));
-        settingsLayout.Size = new Size(1210, 192);
+        settingsLayout.Size = new Size(1733, 306);
         settingsLayout.TabIndex = 0;
         // 
         // modelBox
         // 
         modelBox.Dock = DockStyle.Top;
-        modelBox.Location = new Point(209, 106);
+        modelBox.Location = new Point(298, 177);
+        modelBox.Margin = new Padding(4, 5, 4, 5);
         modelBox.Name = "modelBox";
-        modelBox.Size = new Size(982, 23);
+        modelBox.Size = new Size(1408, 31);
         modelBox.TabIndex = 1;
         modelBox.Text = "qwen2.5-coder:14b";
         // 
         // mcpArgsBox
         // 
         mcpArgsBox.Dock = DockStyle.Top;
-        mcpArgsBox.Location = new Point(209, 135);
+        mcpArgsBox.Location = new Point(298, 218);
+        mcpArgsBox.Margin = new Padding(4, 5, 4, 5);
         mcpArgsBox.Name = "mcpArgsBox";
-        mcpArgsBox.Size = new Size(982, 23);
+        mcpArgsBox.Size = new Size(1408, 31);
         mcpArgsBox.TabIndex = 2;
         // 
         // settingsHint
         // 
         settingsHint.AutoSize = true;
         settingsHint.ForeColor = Color.Gainsboro;
-        settingsHint.Location = new Point(19, 161);
+        settingsHint.Location = new Point(27, 254);
+        settingsHint.Margin = new Padding(4, 0, 4, 0);
         settingsHint.Name = "settingsHint";
-        settingsHint.Size = new Size(0, 15);
+        settingsHint.Size = new Size(0, 25);
         settingsHint.TabIndex = 3;
         // 
         // ollamaUrlBox
         // 
         ollamaUrlBox.Dock = DockStyle.Top;
-        ollamaUrlBox.Location = new Point(209, 19);
+        ollamaUrlBox.Location = new Point(298, 32);
+        ollamaUrlBox.Margin = new Padding(4, 5, 4, 5);
         ollamaUrlBox.Name = "ollamaUrlBox";
-        ollamaUrlBox.Size = new Size(982, 23);
+        ollamaUrlBox.Size = new Size(1408, 31);
         ollamaUrlBox.TabIndex = 0;
         ollamaUrlBox.Text = "http://aibox:11434";
         // 
@@ -575,11 +614,11 @@ partial class MainForm
         connectButton.FlatAppearance.BorderSize = 0;
         connectButton.FlatStyle = FlatStyle.Flat;
         connectButton.ForeColor = Color.White;
-        connectButton.Location = new Point(16, 28);
-        connectButton.Margin = new Padding(0, 12, 0, 0);
+        connectButton.Location = new Point(23, 47);
+        connectButton.Margin = new Padding(0, 20, 0, 0);
         connectButton.Name = "connectButton";
-        connectButton.Padding = new Padding(12, 6, 12, 6);
-        connectButton.Size = new Size(190, 75);
+        connectButton.Padding = new Padding(17, 10, 17, 10);
+        connectButton.Size = new Size(271, 125);
         connectButton.TabIndex = 5;
         connectButton.Text = "Connect to LLM and Launch Solidworks MCP Service";
         connectButton.UseVisualStyleBackColor = false;
@@ -587,11 +626,12 @@ partial class MainForm
         // 
         // MainForm
         // 
-        AutoScaleDimensions = new SizeF(7F, 15F);
+        AutoScaleDimensions = new SizeF(10F, 25F);
         AutoScaleMode = AutoScaleMode.Font;
         BackColor = Color.FromArgb(  27,   30,   36);
-        ClientSize = new Size(1280, 860);
+        ClientSize = new Size(1829, 1433);
         Controls.Add(rootLayout);
+        Margin = new Padding(4, 5, 4, 5);
         Name = "MainForm";
         StartPosition = FormStartPosition.CenterScreen;
         Text = "SolidWorks Chat Client (Ollama + MCP)";

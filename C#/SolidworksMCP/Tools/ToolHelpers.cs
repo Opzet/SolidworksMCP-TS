@@ -3,7 +3,7 @@ namespace SolidworksMCP;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-internal static class ToolHelpers
+public static class ToolHelpers
 {
     public static Dictionary<string, object?> ToArguments(JsonElement? arguments)
     {
@@ -62,8 +62,10 @@ internal static class ToolHelpers
             Planes = GetStringList(selection, "planes"),
             Axes = GetStringList(selection, "axes"),
             Sketches = GetStringList(selection, "sketches"),
-            SketchSegments = GetIntList(selection, "sketch_segments"),
-            SketchPoints = GetIntList(selection, "sketch_points"),
+            SketchSegments = GetOptionalIntList(selection, "sketch_segments"),
+            SketchSegmentHandles = GetStringList(selection, "sketch_segments"),
+            SketchPoints = GetOptionalIntList(selection, "sketch_points"),
+            SketchPointHandles = GetStringList(selection, "sketch_points"),
             SketchName = GetString(selection, "sketch_name"),
             Features = GetStringList(selection, "features"),
             Components = GetStringList(selection, "components"),
@@ -83,6 +85,36 @@ internal static class ToolHelpers
             JsonElement element when element.ValueKind == JsonValueKind.Array => element.EnumerateArray().Select(item => ConvertToInt32(item)).ToList(),
             _ => [],
         };
+    }
+
+    public static List<int>? GetOptionalIntList(IDictionary<string, object?> arguments, string key)
+    {
+        if (!arguments.TryGetValue(key, out var value))
+        {
+            return null;
+        }
+
+        try
+        {
+            return value switch
+            {
+                IEnumerable<object?> enumerable => enumerable.Select(ConvertToInt32).ToList(),
+                JsonElement element when element.ValueKind == JsonValueKind.Array => element.EnumerateArray().Select(item => ConvertToInt32(item)).ToList(),
+                _ => null,
+            };
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+        catch (InvalidCastException)
+        {
+            return null;
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
     }
 
     private static int ConvertToInt32(object? value)

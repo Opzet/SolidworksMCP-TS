@@ -41,6 +41,31 @@ public sealed class SolidWorksApiCreateSketchTests
     }
 
     [TestMethod]
+    public void GetSelectionParsesStableSketchHandles()
+    {
+        var arguments = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["selection"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["sketch_name"] = "Sketch1",
+                ["sketch_segments"] = new object?[] { "Sketch1:Line1", "Sketch1:Line3" },
+                ["sketch_points"] = new object?[] { "Sketch1:Point1" },
+            },
+        };
+
+        var method = typeof(SolidWorksApi).Assembly.GetType("SolidworksMCP.ToolHelpers")?.GetMethod("GetSelection", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+        var selection = (SelectionSpec?)method.Invoke(null, [arguments, "selection"]);
+        Assert.IsNotNull(selection);
+
+        CollectionAssert.AreEqual(new[] { "Sketch1:Line1", "Sketch1:Line3" }, selection.SketchSegmentHandles?.ToArray());
+        CollectionAssert.AreEqual(new[] { "Sketch1:Point1" }, selection.SketchPointHandles?.ToArray());
+        Assert.IsNull(selection.SketchSegments);
+        Assert.IsNull(selection.SketchPoints);
+        Assert.AreEqual("Sketch1", selection.SketchName);
+    }
+
+    [TestMethod]
     public async Task AddRectangleUsesLateBoundSketchManagerAccessor()
     {
         FakeLateBoundSketchManager sketchManager = new();

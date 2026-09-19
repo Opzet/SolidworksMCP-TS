@@ -14,11 +14,193 @@ public partial class MainForm : Form
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    private const string DemoWorkingRoot = @"C:\SwAutomation";
+
+    private static readonly (string Name, string Prompt)[] DemoSamples =
+    [
+    ("4-Bar Linkage", """
+        Create a complete parametric 4-bar linkage mechanism using available MCP tools only.
+        Objective:
+        Build a fully defined 4-bar linkage consisting of:
+        - Ground Link (fixed base)
+        - Input Crank
+        - Coupler Link
+        - Output Rocker
+
+        Component Definitions:
+
+        1. Ground Link
+            - Create a new part named Ground_Link.
+            - Sketch a rectangular plate.
+            - Add two pivot holes.
+            - Hole diameter: 10 mm.
+            - Center-to-center distance: 120 mm.
+            - Plate thickness: 8 mm.
+            - Fully define all sketch entities.
+            - Extrude the plate.
+
+        2. Input Crank
+            - Create a new part named Input_Crank.
+            - Length: 40 mm pivot-to-pivot.
+            - Width: 15 mm.
+            - Hole diameter: 10 mm at both ends.
+            - Thickness: 8 mm.
+            - Fully define sketch dimensions.
+            - Extrude the part.
+
+        3. Coupler Link
+            - Create a new part named Coupler_Link.
+            - Length: 100 mm pivot-to-pivot.
+            - Width: 15 mm.
+            - Hole diameter: 10 mm at both ends.
+            - Thickness: 8 mm.
+            - Fully define sketch dimensions.
+            - Extrude the part.
+
+        4. Output Rocker
+            - Create a new part named Output_Rocker.
+            - Length: 80 mm pivot-to-pivot.
+            - Width: 15 mm.
+            - Hole diameter: 10 mm at both ends.
+            - Thickness: 8 mm.
+            - Fully define sketch dimensions.
+            - Extrude the part.
+
+        Model Requirements:
+        - Rebuild each part after feature creation.
+        - Verify all sketches are fully defined.
+        - Save all generated parts.
+
+        Assembly Creation:
+
+        5. Create a new assembly named Four_Bar_Linkage.
+
+        6. Insert components:
+            - Ground_Link
+            - Input_Crank
+            - Coupler_Link
+            - Output_Rocker
+
+        7. Apply mates:
+            - Fix Ground_Link.
+            - Concentric mate between crank and left ground pivot.
+            - Concentric mate between crank and coupler.
+            - Concentric mate between coupler and rocker.
+            - Concentric mate between rocker and right ground pivot.
+            - Add coincident face mates as required to remove unwanted translation.
+            - Ensure only rotational motion remains at pivots.
+
+        Motion Verification:
+
+        8. Rotate the input crank through a valid angle.
+            - Rebuild assembly.
+            - Confirm linkage motion is mechanically valid.
+            - Report any over-defined or under-defined mate conditions.
+
+        Drawing Creation:
+
+        9. Create a drawing named Four_Bar_Linkage_Drawing.
+
+        10. Add views:
+            - Front View
+            - Top View
+            - Right View
+            - Isometric View
+
+        11. Apply annotations:
+            - Overall linkage dimensions.
+            - Link lengths.
+            - Hole diameters.
+            - Hole spacing.
+            - Component names.
+
+        Output Summary:
+
+        12. Provide a final report containing:
+            - Parts created.
+            - Assembly created.
+            - Drawings created.
+            - Dimensions used.
+            - Mates applied.
+            - Rebuild status.
+            - Any missing MCP capabilities.
+            - Any manual SOLIDWORKS steps still required.
+
+        Constraints:
+        - Use MCP tools only.
+        - Do not assume unsupported CAD operations exist.
+        - Validate success after each step.
+    """),
+    ("Simple Box", """
+        Create a simple box part using available MCP tools only.
+
+        Steps:
+        1. Create a new part.
+        2. Sketch a centered rectangle on the Front Plane.
+        3. Extrude the sketch.
+        4. Save the part as box.sldprt.
+        """),
+                ("Parametric Cylinder", """
+        Create a parametric cylinder using available MCP tools only.
+
+        Steps:
+        1. Create a new part.
+        2. Sketch a circle on the Front Plane.
+        3. Extrude the sketch.
+        4. Add a height equation.
+        5. Link the extrusion dimension to the equation.
+     """),
+    ("Assembly with Mates", """
+        Create a small assembly with mates using available MCP tools only.
+
+        Steps:
+        1. Create a new assembly.
+        2. Insert a base component and fix it.
+        3. Insert a shaft component.
+        4. Add concentric and coincident mates between the parts.
+    """),
+    ("Sheet Metal Bracket", """
+        Create a sheet metal bracket using available MCP tools only.
+
+        Steps:
+        1. Create a new part.
+        2. Sketch a rectangle on the Top Plane.
+        3. Apply a base flange.
+        4. Sketch a bend line on the top face.
+        5. Add a sketched bend.
+        6. Flatten the sheet metal and export the flat pattern.
+    """),
+    ("Aluminum Part", """
+        Create an aluminum part with analysis using available MCP tools only.
+
+        Steps:
+        1. Create a new part.
+        2. Sketch a circle on the Front Plane.
+        3. Extrude the sketch.
+        4. Apply Aluminum 6061-T6.
+        5. Set the appearance color.
+        6. Report mass properties.
+    """),
+    ("Drawing Views + GD&T", """
+        Create a drawing with multiple views and GD&T using available MCP tools only.
+
+        Steps:
+        1. Create a new drawing.
+        2. Add a front view.
+        3. Add a projected right view or isometric view.
+        4. Add a detail view.
+        5. Add centerlines and geometric tolerance.
+        6. Add a BOM table and export the drawing.
+    """),
+    ];
+
     private ChatRuntime? runtime;
     private string? selectedImagePath;
     private bool connecting;
     private bool hasPendingPlanApproval;
     private bool isPlanApproved;
+    private bool awaitingStepApproval;
+    private string? pendingStepApprovalPrompt;
     private CancellationTokenSource? currentOperationCts;
     private int planWaitStart = -1;
     private int planWaitLength;
@@ -29,7 +211,12 @@ public partial class MainForm : Form
         Resize += MainForm_Resize;
         inputBox.KeyDown += InputBox_KeyDown;
         inputBox.PlaceholderText = "Describe the SolidWorks task, then press Enter to send...";
+        comboBox1.DropDownStyle = ComboBoxStyle.DropDownList;
+        comboBox1.SelectedIndexChanged += DemoComboBox_SelectedIndexChanged;
+        demoButton.Click += DemoButton_Click;
+        humanInLoopCheckBox.Checked = false;
 
+        PopulateDemos( );
         MainForm_Resize(this, EventArgs.Empty);
         UpdatePlanActionButtons( );
         settingsHint.Text = $"MCP executable path: {GetDefaultMcpCommandPath( )}";
@@ -40,103 +227,73 @@ public partial class MainForm : Form
 
     public void PopulateDemos()
     {
+        comboBox1.BeginUpdate( );
 
-        /*
-        Create a Simple Box
-1. sw_create_part()
-2. sw_create_sketch(plane='Front Plane')
-3. sw_sketch_rectangle(x1=0, y1=0, x2=100, y2=60)
-4. sw_exit_sketch()
-5. sw_extrude(depth=40)
-6. sw_save_document(file_path='C:/parts/box.sldprt')
-Parametric Cylinder
-1. sw_create_part()
-2. sw_create_sketch(plane='Front Plane')
-3. sw_sketch_circle(cx=0, cy=0, radius=25)
-4. sw_exit_sketch()
-5. sw_extrude(depth=100)
-6. sw_add_equation('"Height" = 100mm')
-7. sw_add_equation('"D1@Boss-Extrude1" = "Height"')
-Assembly with Mates
-1. sw_create_assembly()
-2. sw_insert_component(file_path='C:/parts/base.sldprt', fixed=True)
-3. sw_insert_component(file_path='C:/parts/shaft.sldprt', z=50)
-4. sw_add_mate(mate_type='CONCENTRIC', entity1='Face<1>@shaft-1', entity2='Face<1>@base-1')
-5. sw_add_mate(mate_type='COINCIDENT', entity1='Face<2>@shaft-1', entity2='Face<2>@base-1')
-Sheet Metal Bracket (with bend)
-1. sw_create_part()
-2. sw_create_sketch(plane='Top Plane')
-3. sw_sketch_rectangle(x1=0, y1=0, x2=200, y2=100)
-4. sw_exit_sketch()
-5. sw_base_flange(thickness=2.0, bend_radius=1.5)
-6. sw_create_sketch(plane='<top face>')
-7. sw_sketch_line(...)  # bend line
-8. sw_exit_sketch()
-9. sw_sketched_bend(angle=90)
-10. sw_flatten_sheet_metal()
-11. sw_export_flat_pattern('C:/parts/bracket_flat.dxf')
-Aluminum Part with Custom Color and Mass Analysis
-1. sw_create_part()
-2. sw_create_sketch('Front Plane')
-3. sw_sketch_circle(0, 0, 25)
-4. sw_exit_sketch()
-5. sw_extrude(depth=100)
-6. sw_set_material('Aluminum 6061-T6')
-7. sw_set_appearance_color(r=180, g=180, b=200, transparency=0.0)
-8. sw_get_mass_properties()  # returns mass, volume, COG
-Drawing with Multiple Views + GD&T
-1. sw_create_drawing()
-2. sw_add_drawing_view(view_type='front', x=100, y=200, scale=1.0)
-3. sw_add_projected_view(parent_view_name='Drawing View1', direction='right')
-4. sw_add_detail_view(x=80, y=150, radius=15, scale=2.0, label='A')
-5. sw_add_centerline(view_name='Drawing View1')
-6. sw_add_geometric_tolerance(gtol_text='Position 0.1 A B C', x=50, y=80)
-7. sw_add_surface_finish(symbol_type='machining', roughness='3.2')
-8. sw_add_bom_table()
-9. sw_export_drawing_pdf('C:/drawings/part.pdf')
+        try
+        {
+            comboBox1.Items.Clear( );
 
+            foreach (var sample in DemoSamples)
+            {
+                comboBox1.Items.Add(sample.Name);
+            }
 
-        */
-        //const string demoPrompt = "Create a complete 4-bar linkage demo using available MCP tools only. Steps: 1) create a new part and sketch linkage plates with holes, 2) extrude features, 3) set key dimensions, 4) rebuild model, 5) create drawing from model, 6) add front and isometric views, 7) summarize generated artifacts and remaining manual CAD steps if any.";
-        // https://help.solidworks.com/2026/english/api
-        const string demoPrompt = @"
-                                    CAD 4-bar linkage parts and align in assemblky using only the available MCP tools.
-                                    
-                                    Objective:
+            if (comboBox1.Items.Count > 0)
+            {
+                comboBox1.SelectedIndex = 0;
+            }
+        }
+        finally
+        {
+            comboBox1.EndUpdate( );
+        }
 
-                                    Build a fully defined parametric 4-bar linkage model, generate the required CAD parts and assembly files and provide a concise summary of the results.
-                                    List missing or desired mcp tools that would be needed to fully automate the 4-bar linkage creation process.  
-                                    
-                                    Workflow:
-                                    1. Create ground link, crank, coupler, and rocker CAD parts for 4-bar linkage assembly
-                                    2. Sketch each linkage components (ground link, crank, coupler, and rocker), including all required hole locations.
-                                    3. Apply geometric constraints and dimensions to fully define each sketch.
-                                    4. Extrude the sketches into solid bodies with appropriate feature names.
-                                    5. Set and document the critical linkage dimensions (link lengths, hole diameters, plate thicknesses, and center-to-center distances).
-                                    6. Rebuild/regenerate the model and verify that all features are successfully created without errors.
-                                    7. Save all solidworks parts with relevant names.
-                                    
-                                    8. Create a drawing based on the completed model.
-                                    9. Insert at minimum:
-                                    - One front view
-                                    - One isometric view
-                                    10. Ensure drawing views are properly scaled and updated.
-                                    
-                                    Final Output:
-                                    - List every generated artifact (part files, drawings, etc.).
-                                    - Report the final dimensions used in the model.
-                                    - Confirm whether the model and drawing were created successfully.
-                                    - Identify any steps that could not be completed through MCP tools alone.
-                                    - Provide any remaining manual CAD actions required to achieve a production-ready model.
-                                    
-                                    ";
+        UpdateDemoSelectionUi( );
+    }
 
-        //Load up Combo comboBox1 with demo
+    private void DemoComboBox_SelectedIndexChanged(object? sender, EventArgs e) => UpdateDemoSelectionUi( );
 
-        // opon click of DemoButton_Click
+    private async void DemoButton_Click(object? sender, EventArgs e)
+    {
+        try
+        {
+            var demoPrompt = GetSelectedDemoPrompt( );
+            if (demoPrompt is null)
+            {
+                AppendLog("system", "Select a demo sample first.");
+                return;
+            }
 
-      //  await SendPromptAsync(demoPrompt).ConfigureAwait(true);
+            await SendPromptAsync(ApplyDemoWorkingRoot(demoPrompt)).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            AppendLog("error", ex.Message);
+        }
+    }
 
+    private string? GetSelectedDemoPrompt( )
+    {
+        if (comboBox1.SelectedIndex < 0 || comboBox1.SelectedIndex >= DemoSamples.Length)
+        {
+            return null;
+        }
+
+        return DemoSamples[comboBox1.SelectedIndex].Prompt;
+    }
+
+    private static string ApplyDemoWorkingRoot(string prompt)
+    {
+        Directory.CreateDirectory(DemoWorkingRoot);
+
+        return $"{prompt.Trim()}{Environment.NewLine}{Environment.NewLine}Working/save root location for this demo: {DemoWorkingRoot}{Environment.NewLine}- Use this root for all generated parts, assemblies, drawings, exports, and saved artifacts.{Environment.NewLine}- Create and reuse demo-specific subfolders under this root as needed.";
+    }
+
+    private void UpdateDemoSelectionUi( )
+    {
+        demoButton.Text = comboBox1.SelectedItem is string demoName && !string.IsNullOrWhiteSpace(demoName)
+            ? $"Demo: {demoName}"
+            : "Demo:";
     }
     private async void ConnectButton_Click(object? sender, EventArgs e) => await ConnectAsync( ).ConfigureAwait(true);
 
@@ -319,6 +476,15 @@ Drawing with Multiple Views + GD&T
             return;
         }
 
+        if (awaitingStepApproval)
+        {
+            if (await TryHandlePendingStepApprovalAsync(text).ConfigureAwait(true))
+            {
+                inputBox.Text = string.Empty;
+                return;
+            }
+        }
+
         if (hasPendingPlanApproval)
         {
             if (await TryHandlePendingPlanCommandAsync(text).ConfigureAwait(true))
@@ -345,6 +511,9 @@ Drawing with Multiple Views + GD&T
         hasPendingPlanApproval = false;
         isPlanApproved = false;
         UpdatePlanActionButtons( );
+        awaitingStepApproval = false;
+        pendingStepApprovalPrompt = null;
+        UpdatePlanActionButtons( );
         AppendLog("system", "Started a new chat. Previous plan and conversation context were cleared.");
     }
 
@@ -356,7 +525,7 @@ Drawing with Multiple Views + GD&T
             return;
         }
 
-        const string decodePrompt = "Decode this image into engineering intent and propose exact SolidWorks build steps, dimensions, constraints, BOM candidates, and drawing views required. After analysis, use tools where possible to start model creation.";
+        const string decodePrompt = "Analyze this screenshot or image for SolidWorks/CAD intent, identify visible failures or missing features, propose exact recovery steps, and suggest any scope changes, dimensions, constraints, BOM candidates, and drawing views required. After analysis, use tools where possible to continue model creation.";
         await SendPromptAsync(decodePrompt).ConfigureAwait(true);
     }
 
@@ -414,7 +583,7 @@ Drawing with Multiple Views + GD&T
             hasPendingPlanApproval = true;
             isPlanApproved = false;
             UpdatePlanActionButtons( );
-            AppendLog("system", "Plan ready. Use Approve/Reject/Execute buttons or type /approve, /reject, /execute, /new.");
+            AppendLog("system", "Plan ready. Use Approve/Reject/Execute buttons or type /approve, /reject, /execute, /retry, /new.");
         }
         catch (OperationCanceledException)
         {
@@ -522,6 +691,25 @@ Drawing with Multiple Views + GD&T
             return true;
         }
 
+        if (commandText.Equals("/retry", StringComparison.OrdinalIgnoreCase))
+        {
+            AppendLog("you", commandText);
+            if (!hasPendingPlanApproval)
+            {
+                AppendLog("system", "No failed plan is available to retry.");
+                return true;
+            }
+
+            if (!isPlanApproved)
+            {
+                AppendLog("system", "Approve the plan first, then retry.");
+                return true;
+            }
+
+            await ExecuteApprovedPlanAsync( ).ConfigureAwait(true);
+            return true;
+        }
+
         if (commandText.Equals("/approve", StringComparison.OrdinalIgnoreCase))
         {
             AppendLog("you", commandText);
@@ -553,6 +741,41 @@ Drawing with Multiple Views + GD&T
         return true;
     }
 
+    private async Task<bool> TryHandlePendingStepApprovalAsync(string commandText)
+    {
+        if (!awaitingStepApproval)
+        {
+            return false;
+        }
+
+        if (IsAffirmativeStepApprovalResponse(commandText))
+        {
+            AppendLog("you", commandText);
+            awaitingStepApproval = false;
+            pendingStepApprovalPrompt = null;
+            UpdatePlanActionButtons( );
+            await ExecuteApprovedPlanAsync( ).ConfigureAwait(true);
+            return true;
+        }
+
+        if (commandText.StartsWith("/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        AppendLog("you", commandText);
+
+        if (commandText.Length < 8)
+        {
+            AppendLog("system", "Reply yes to continue, or describe the revision needed for the paused step.");
+            return true;
+        }
+
+        RejectPendingPlan("Revision requested for the paused step. Drafting a revised prompt from your update...");
+        await SendPromptAsync(commandText).ConfigureAwait(true);
+        return true;
+    }
+
     private async Task ExecuteApprovedPlanAsync()
     {
         if (runtime is null)
@@ -578,32 +801,72 @@ Drawing with Multiple Views + GD&T
         try
         {
             AppendLog("system", "Executing approved MCP plan...");
-            var result = await runtime.ExecuteApprovedPlanAsync(operation.Token).ConfigureAwait(true);
-            hasPendingPlanApproval = false;
-            isPlanApproved = false;
-            UpdatePlanActionButtons( );
+            var result = await runtime.ExecuteApprovedPlanAsync(humanInLoopCheckBox.Checked, operation.Token).ConfigureAwait(true);
 
             foreach (var progressUpdate in result.ProgressUpdates)
             {
                 AppendLog("plan", progressUpdate);
             }
 
-            AppendLog("assistant", result.FinalResponse);
+            if (result.AwaitingHumanApproval)
+            {
+                awaitingStepApproval = true;
+                pendingStepApprovalPrompt = result.HumanApprovalPrompt;
+                AppendLog("system", result.HumanApprovalPrompt ?? result.FinalResponse);
+            }
+            else
+            {
+                awaitingStepApproval = false;
+                pendingStepApprovalPrompt = null;
+                AppendLog("assistant", result.FinalResponse);
+            }
 
             if (!string.IsNullOrWhiteSpace(result.FeedbackImagePath) && File.Exists(result.FeedbackImagePath))
             {
-                LoadPreviewImage(result.FeedbackImagePath, "Generated feedback image ready for the next prompt.");
+                LoadPreviewImage(result.FeedbackImagePath, "Captured screenshot or feedback image is ready for analysis.");
                 attachImageCheckBox.Checked = true;
                 AppendLog("system", $"Visual feedback captured: {result.FeedbackImagePath}");
+                AppendLog("system", "Use Decode + Plan CAD Steps to inspect the screenshot before retrying or redefining the scope.");
             }
 
-            if (result.FailureDiagnostic is not null)
+            if (result.StoppedOnFirstFailure)
             {
-                AppendLog("error", $"Execution failures: {result.FailureDiagnostic.FailedToolCount}");
-                foreach (var summary in result.FailureDiagnostic.FailureSummaries)
+                hasPendingPlanApproval = true;
+                isPlanApproved = true;
+                awaitingStepApproval = result.AwaitingHumanApproval;
+                pendingStepApprovalPrompt = result.HumanApprovalPrompt;
+                UpdatePlanActionButtons( );
+
+                var failureDiagnostic = result.FailureDiagnostic;
+                AppendLog("error", $"Execution stopped on the first failure. Failed tool count: {failureDiagnostic?.FailedToolCount ?? 0}");
+                if (failureDiagnostic is not null)
                 {
-                    AppendLog("error", summary);
+                    foreach (var summary in failureDiagnostic.FailureSummaries)
+                    {
+                        AppendLog("error", summary);
+                    }
                 }
+
+                if (result.AwaitingHumanApproval && !string.IsNullOrWhiteSpace(result.HumanApprovalPrompt))
+                {
+                    AppendLog("system", result.HumanApprovalPrompt);
+                }
+                else if (!string.IsNullOrWhiteSpace(result.FeedbackImagePath))
+                {
+                    AppendLog("system", "A screenshot or feedback image is attached for analysis. Retry the same plan or redefine the scope with a revised prompt.");
+                }
+                else
+                {
+                    AppendLog("system", "Retry the same plan or redefine the scope with a revised prompt. Attach a screenshot if the failure is visual.");
+                }
+            }
+            else if (!result.AwaitingHumanApproval)
+            {
+                hasPendingPlanApproval = false;
+                isPlanApproved = false;
+                awaitingStepApproval = false;
+                pendingStepApprovalPrompt = null;
+                UpdatePlanActionButtons( );
             }
 
             foreach (var toolCall in result.ToolCalls)
@@ -644,16 +907,25 @@ Drawing with Multiple Views + GD&T
         runtime?.RejectPendingPlan( );
         hasPendingPlanApproval = false;
         isPlanApproved = false;
+        awaitingStepApproval = false;
+        pendingStepApprovalPrompt = null;
         UpdatePlanActionButtons( );
         AppendLog(role, message);
+    }
+
+    private static bool IsAffirmativeStepApprovalResponse(string text)
+    {
+        var normalized = text.Trim().ToLowerInvariant();
+        return normalized is "y" or "yes" or "ok" or "okay" or "continue" or "go" or "approve" or "approved" or "resume" or "proceed" || normalized.StartsWith("yes ", StringComparison.Ordinal) || normalized.StartsWith("continue ", StringComparison.Ordinal);
     }
 
     private void UpdatePlanActionButtons()
     {
         var canInteract = currentOperationCts is null;
-        approvePlanButton.Enabled = canInteract && hasPendingPlanApproval && !isPlanApproved;
+        approvePlanButton.Enabled = canInteract && hasPendingPlanApproval && !isPlanApproved && !awaitingStepApproval;
         rejectPlanButton.Enabled = canInteract && hasPendingPlanApproval;
-        executePlanButton.Enabled = canInteract && hasPendingPlanApproval && isPlanApproved;
+        executePlanButton.Enabled = canInteract && hasPendingPlanApproval && (isPlanApproved || awaitingStepApproval);
+        executePlanButton.Text = awaitingStepApproval ? "Continue" : "Execute";
     }
 
     private CancellationTokenSource BeginOperation()
@@ -683,6 +955,7 @@ Drawing with Multiple Views + GD&T
         connectButton.Enabled = enabled;
         decodeImageButton.Enabled = enabled;
         demoButton.Enabled = enabled;
+        humanInLoopCheckBox.Enabled = enabled;
 
         if (!enabled)
         {

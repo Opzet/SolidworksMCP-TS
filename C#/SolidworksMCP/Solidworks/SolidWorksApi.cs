@@ -4427,10 +4427,22 @@ End Sub
         var sketch = ResolveSketch(selection.SketchName) ?? throw new InvalidOperationException($"Sketch not found: {selection.SketchName ?? "<active>"}");
         var specificSketch = TryInvoke(sketch, "GetSpecificFeature2") ?? sketch;
 
+        foreach (var handle in selection.SketchSegmentHandles ?? [])
+        {
+            var segment = GetSketchEntityByHandle(specificSketch, "GetSketchSegments", "GetSketchSegments2", handle, "sketch segment");
+            yield return segment;
+        }
+
         foreach (var index in selection.SketchSegments ?? [])
         {
             var segment = GetSketchEntityAtIndex(specificSketch, "GetSketchSegments", "GetSketchSegments2", index, "sketch segment");
             yield return segment;
+        }
+
+        foreach (var handle in selection.SketchPointHandles ?? [])
+        {
+            var point = GetSketchEntityByHandle(specificSketch, "GetSketchPoints2", "GetSketchPoints", handle, "sketch point");
+            yield return point;
         }
 
         foreach (var index in selection.SketchPoints ?? [])
@@ -4449,6 +4461,54 @@ End Sub
         }
 
         return entries[index];
+    }
+
+    private static object GetSketchEntityByHandle(object sketch, string primaryMethod, string secondaryMethod, string handle, string label)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(handle);
+        var entries = AsEnumerable(TryInvoke(sketch, primaryMethod) ?? TryInvoke(sketch, secondaryMethod));
+        var normalizedHandle = handle.Trim();
+
+        if (TryParseSketchEntityHandleIndex(normalizedHandle, out var parsedIndex) && parsedIndex >= 0 && parsedIndex < entries.Count)
+        {
+            return entries[parsedIndex];
+        }
+
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var candidate = entries[index];
+            var candidateName = Convert.ToString(GetMethodValue(candidate, "GetNameForSelection")) ?? string.Empty;
+            if (string.Equals(candidateName, normalizedHandle, StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+        }
+
+        throw new InvalidOperationException($"{label} handle '{handle}' was not found in the target sketch.");
+    }
+
+    private static bool TryParseSketchEntityHandleIndex(string handle, out int index)
+    {
+        index = -1;
+        var colonIndex = handle.LastIndexOf(':');
+        var token = colonIndex >= 0 ? handle[(colonIndex + 1)..] : handle;
+
+        if (token.StartsWith("Line", StringComparison.OrdinalIgnoreCase)
+            || token.StartsWith("Point", StringComparison.OrdinalIgnoreCase)
+            || token.StartsWith("Arc", StringComparison.OrdinalIgnoreCase)
+            || token.StartsWith("Circle", StringComparison.OrdinalIgnoreCase)
+            || token.StartsWith("Spline", StringComparison.OrdinalIgnoreCase)
+            || token.StartsWith("Ellipse", StringComparison.OrdinalIgnoreCase))
+        {
+            var digits = new string(token.SkipWhile(ch => !char.IsDigit(ch)).ToArray());
+            if (int.TryParse(digits, out var oneBasedIndex) && oneBasedIndex > 0)
+            {
+                index = oneBasedIndex - 1;
+                return true;
+            }
+        }
+
+        return int.TryParse(token, out index);
     }
 
     private static bool TrySelectEntity(object entity, bool append)

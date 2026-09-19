@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 internal sealed class ChatRuntime : IDisposable
 {
     private const int MaxRounds = 8;
-    private const string SystemPrompt = "You are a SolidWorks CAD assistant for SolidWorks 2026 and newer only. Use MCP tools whenever CAD actions are required. Be deterministic. Do not plan for or mention compatibility with older SolidWorks versions, and do not suggest fallback workflows for prior releases. Before geometry edits, check document context with get_active_document_info and use list_reference_planes, list_sketches, list_sketch_segments, list_components, and list_dimensions when selection or stable handles are needed. Prefer declarative selection objects over implicit UI selection. For part creation workflows, first enumerate templates with list_part_templates (if available), then create_part or create_assembly as appropriate, then continue with create_sketch, add_line/add_circle/add_rectangle, add_relation, add_dimension, exit_sketch, create_extrusion, set_dimension, insert_component, add_mate, and drawing tools as needed. Plans must explicitly include save/status/rebuild verification by using get_active_document_info before major actions, get_sketch_status while constraining sketches, get_rebuild_status or rebuild_model after geometry or mate changes, save_document when an unsaved document first needs a durable file path, save_active_document only for later in-place saves, and capture_screenshot after meaningful CAD changes when visual feedback would help the model inspect the result. If a required capability is unavailable, clearly state the limitation and continue with available SolidWorks 2026+ tools.";
+    private const string SystemPrompt = "You are a SolidWorks CAD assistant for SolidWorks 2026 and newer only. Use MCP tools whenever CAD actions are required. Be deterministic. Do not plan for or mention compatibility with older SolidWorks versions, and do not suggest fallback workflows for prior releases. Before geometry edits, check document context with get_active_document_info and use list_reference_planes, list_sketches, list_sketch_segments, list_components, and list_dimensions when selection or stable handles are needed. Prefer declarative selection objects over implicit UI selection. For part creation workflows, first enumerate templates with list_part_templates (if available), then create_part or create_assembly as appropriate, then continue with create_sketch, add_line/add_circle/add_rectangle, add_relation, add_dimension, exit_sketch, create_extrusion, set_dimension, insert_component, add_mate, and drawing tools as needed. Plans must explicitly include save/status/rebuild verification by using get_active_document_info before major actions, get_sketch_status while constraining sketches, get_rebuild_status or rebuild_model after geometry or mate changes, save_document when an unsaved document first needs a durable file path, save_active_document only for later in-place saves, and capture_screenshot after meaningful CAD changes when visual feedback would help the model inspect the result. Never invent placeholder paths such as C:/path/to/save/... . Use a real output path only when one is known or has been requested; otherwise ask for a save location or skip save/export steps and explain why. When using sketch selection, prefer the stable handles returned by list_sketch_segments and list_sketches instead of made-up names. If a required capability is unavailable, clearly state the limitation and continue with available SolidWorks 2026+ tools.";
 
     private readonly ChatSettings settings;
     private readonly McpClient mcp;
@@ -134,7 +134,7 @@ internal sealed class ChatRuntime : IDisposable
         conversation.Add(new OllamaMessage("system", SystemPrompt));
     }
 
-    public async Task<ChatTurnResult> ExecuteApprovedPlanAsync(CancellationToken cancellationToken = default)
+    public async Task<ChatTurnResult> ExecuteApprovedPlanAsync(bool humanInLoop = false, CancellationToken cancellationToken = default)
     {
         if (pendingToolCalls is null || pendingToolCalls.Count == 0)
         {
@@ -158,9 +158,10 @@ internal sealed class ChatRuntime : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (var call in currentCalls)
+            for (var callIndex = 0; callIndex < currentCalls.Count; callIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var call = currentCalls[callIndex];
                 var stepNumber = completedSteps + 1;
                 progressUpdates.Add($"Executing tool {stepNumber}/{totalSteps}: {call.Function.Name}");
 
@@ -195,12 +196,56 @@ internal sealed class ChatRuntime : IDisposable
                 {
                     conversation.Add(new OllamaMessage("tool", result.DisplayText, ToolName: call.Function.Name));
                 }
-                if (!succeeded && failureSummary is not null)
+
+                if (!succeeded)
                 {
-                    progressUpdates.Add($"Tool {stepNumber}/{totalSteps} reported a failure: {failureSummary}");
+                    if (failureSummary is not null)
+                    {
+                        progressUpdates.Add($"Tool {stepNumber}/{totalSteps} reported a failure: {failureSummary}");
+                    }
+
+                    progressUpdates.Add("Stopping execution after the first failed tool call.");
+                    pendingToolCalls = currentCalls[callIndex..];
+
+                    var failureDiagnostic = BuildFailureDiagnostic(toolCalls);
+                    var failedMessage = failureSummary ?? $"{call.Function.Name} failed.";
+                    var approvalPrompt = humanInLoop
+                        ? $"{failedMessage} Do you want to retry this step as-is, or revise the prompt and scope? Reply yes to retry the paused step, or describe the revision needed."
+                        : null;
+
+                    return new ChatTurnResult(
+                        failedMessage,
+                        toolCalls,
+                        progressUpdates,
+                        failedMessage,
+                        failureDiagnostic,
+                        feedbackImagePath,
+                        feedbackMediaType,
+                        true,
+                        humanInLoop,
+                        approvalPrompt);
                 }
 
                 completedSteps++;
+
+                if (humanInLoop && completedSteps < totalSteps)
+                {
+                    var remainingCalls = currentCalls[(callIndex + 1)..].ToList();
+                    pendingToolCalls = remainingCalls;
+                    var prompt = $"Step {stepNumber}/{totalSteps} completed: {call.Function.Name}. Is this correct, or does this step require revision? Reply yes to continue, or describe the revision needed.";
+                    progressUpdates.Add("Pausing for human review before the next step.");
+                    return new ChatTurnResult(
+                        prompt,
+                        toolCalls,
+                        progressUpdates,
+                        prompt,
+                        BuildFailureDiagnostic(toolCalls),
+                        feedbackImagePath,
+                        feedbackMediaType,
+                        false,
+                        true,
+                        prompt);
+                }
             }
 
             var tools = await mcp.ListToolsAsOllamaToolsAsync(cancellationToken).ConfigureAwait(false);
@@ -245,7 +290,7 @@ internal sealed class ChatRuntime : IDisposable
                 null);
         }
 
-        return await ExecuteApprovedPlanAsync(cancellationToken).ConfigureAwait(false);
+        return await ExecuteApprovedPlanAsync(false, cancellationToken).ConfigureAwait(false);
     }
 
     public void Dispose() => mcp.Dispose();
@@ -407,7 +452,10 @@ internal sealed class ChatRuntime : IDisposable
             && !trimmed.Contains("\"success\": false", StringComparison.OrdinalIgnoreCase)
             && !trimmed.Contains("""success": false""", StringComparison.OrdinalIgnoreCase)
             && !trimmed.Contains("\"error\":", StringComparison.OrdinalIgnoreCase)
-            && !trimmed.Contains(" error ", StringComparison.OrdinalIgnoreCase);
+            && !trimmed.Contains(" error ", StringComparison.OrdinalIgnoreCase)
+            && !trimmed.Contains("file not found", StringComparison.OrdinalIgnoreCase)
+            && !trimmed.Contains("export completed but file not found", StringComparison.OrdinalIgnoreCase)
+            && !trimmed.Contains("could not save", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildFailureSummary(string toolName, string result)

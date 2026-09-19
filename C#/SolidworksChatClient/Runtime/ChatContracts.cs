@@ -38,7 +38,10 @@ internal sealed record ChatTurnResult(
     string FinalAssistantMessage,
     ChatFailureDiagnostic? FailureDiagnostic = null,
     string? FeedbackImagePath = null,
-    string? FeedbackMediaType = null);
+    string? FeedbackMediaType = null,
+    bool StoppedOnFirstFailure = false,
+    bool AwaitingHumanApproval = false,
+    string? HumanApprovalPrompt = null);
 
 internal sealed record OllamaChatRequest(string Model, IReadOnlyList<OllamaMessage> Messages, JsonArray? Tools, bool Stream);
 

@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Remove=".template.config\**" />
+    <None Remove=".template.config\**" />
+    <None Remove="MyTemplate.vstemplate" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" Version="2.3.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.WindowsForms" Version="9.0.0" />
+    <PackageReference Include="MudBlazor" Version="8.*" />
+  </ItemGroup>
+
+</Project>
