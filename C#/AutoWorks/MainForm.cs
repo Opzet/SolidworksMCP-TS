@@ -10,17 +10,29 @@ public sealed partial class MainForm : Form
 
     public MainForm()
     {
-        InitializeComponent();
+        InitializeComponent( );
 
-        var services = new ServiceCollection();
-        services.AddWindowsFormsBlazorWebView();
-        services.AddMudServices();
-        serviceProvider = services.BuildServiceProvider();
+        var services = new ServiceCollection( );
+        services.AddWindowsFormsBlazorWebView( );
+        services.AddMudServices( );
+        serviceProvider = services.BuildServiceProvider( );
 
+
+        //InitializeBlazorWebView( );
 
         BlazorWebView.HostPage = "wwwroot/index.html";
         BlazorWebView.Services = serviceProvider;
-        BlazorWebView.RootComponents.Clear();
+        BlazorWebView.RootComponents.Clear( );
         BlazorWebView.RootComponents.Add<App>("#app");
     }
+    //private void InitializeBlazorWebView()
+    //{
+    //    BlazorWebView.HostPage = "wwwroot/index.html";
+    //    BlazorWebView.RootComponents.Add<Routes>("#app");
+
+    //    BlazorWebView.WebView.CoreWebView2InitializationCompleted += (s, e) =>
+    //    {
+    //        BlazorWebView.WebView.CoreWebView2.AddHostObjectToScript("winFormHost", new WinFormInterop(this));
+    //    };
+    //}
 }
