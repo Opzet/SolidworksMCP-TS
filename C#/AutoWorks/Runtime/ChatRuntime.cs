@@ -134,7 +134,7 @@ internal sealed class ChatRuntime : IDisposable
         conversation.Add(new OllamaMessage("system", SystemPrompt));
     }
 
-    public async Task<ChatTurnResult> ExecuteApprovedPlanAsync(bool humanInLoop = false, CancellationToken cancellationToken = default)
+    public async Task<ChatTurnResult> ExecuteApprovedPlanAsync(bool humanInLoop = true, CancellationToken cancellationToken = default)
     {
         if (pendingToolCalls is null || pendingToolCalls.Count == 0)
         {

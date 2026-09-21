@@ -620,7 +620,7 @@ partial class MainForm
         connectButton.Padding = new Padding(17, 10, 17, 10);
         connectButton.Size = new Size(271, 125);
         connectButton.TabIndex = 5;
-        connectButton.Text = "Connect to LLM and Launch Solidworks MCP Service";
+        connectButton.Text = "Connect to Ai Box and Launch Solidworks MCP Service";
         connectButton.UseVisualStyleBackColor = false;
         connectButton.Click += ConnectButton_Click;
         // 
@@ -634,7 +634,7 @@ partial class MainForm
         Margin = new Padding(4, 5, 4, 5);
         Name = "MainForm";
         StartPosition = FormStartPosition.CenterScreen;
-        Text = "SolidWorks Chat Client (Ollama + MCP)";
+        Text = "SolidWorks Chat Client (Ai Box + MCP)";
         Load += MainForm_Load;
         rootLayout.ResumeLayout(false);
         headerPanel.ResumeLayout(false);

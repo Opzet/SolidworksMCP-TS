@@ -220,7 +220,7 @@ public partial class MainForm : Form
         MainForm_Resize(this, EventArgs.Empty);
         UpdatePlanActionButtons( );
         settingsHint.Text = $"MCP executable path: {GetDefaultMcpCommandPath( )}";
-        AppendLog("system", "Open Settings, connect, and the client will validate Ollama + MCP before chat starts.");
+        AppendLog("system", "Open Settings, connect, and the client will validate Ai Box + MCP before chat starts.");
         AppendLog("system", "Tip: Enter sends message, Shift+Enter adds a new line. Type /new to start a fresh chat.");
     }
 
@@ -390,11 +390,11 @@ public partial class MainForm : Form
             var cancellationToken = operation.Token;
             var configuredModel = modelBox.Text.Trim( );
             var ollamaStatus = await OllamaClient.TestConnectionAsync(ollamaUrlBox.Text.Trim( ), configuredModel, cancellationToken).ConfigureAwait(true);
-            AppendLog("system", $"Ollama reachable. Discovered {ollamaStatus.AvailableModelCount} model(s).");
+            AppendLog("system", $"Ai Box reachable. Discovered {ollamaStatus.AvailableModelCount} model(s).");
 
             if (!ollamaStatus.IsModelAvailable)
             {
-                AppendLog("error", $"Configured model '{configuredModel}' is not in Ollama tags. Continue only after pull/update.");
+                AppendLog("error", $"Configured model '{configuredModel}' is not available on Ai Box. Continue only after pull/update.");
             }
 
             var mcpCommand = GetDefaultMcpCommandPath( );

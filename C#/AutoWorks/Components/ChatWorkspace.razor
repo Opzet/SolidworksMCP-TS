@@ -5,18 +5,18 @@
 @using Microsoft.AspNetCore.Components.Web
 @using AutoWorks.Runtime
 
-<MudGrid Class="pa-4" Spacing="2">
-    <MudItem xs="12" md="8">
-        <MudPaper Class="pa-3" Outlined="true" Style="height: 70vh; overflow:auto;">
-            @foreach (var entry in logEntries)
-            {
-                <MudText Typo="Typo.body2" Class="mb-1" Color="@GetColor(entry.Role)">
-                    <b>[ @entry.Role ]</b> @entry.Message
-                </MudText>
-            }
-        </MudPaper>
+<MudTabs Class="pa-2" Rounded="true" Elevation="1">
+    <MudTabPanel Text="Chat">
+        <MudStack Spacing="2" Style="height: calc(100dvh - 170px); overflow: auto;">
+            <MudPaper Class="pa-3" Outlined="true" Style="min-height: 180px; max-height: 55dvh; overflow:auto;">
+                @foreach (var entry in logEntries)
+                {
+                    <MudText Typo="Typo.body2" Class="mb-1" Color="@GetColor(entry.Role)">
+                        <b>[ @entry.Role ]</b> @entry.Message
+                    </MudText>
+                }
+            </MudPaper>
 
-        <MudStack Row="true" Spacing="1" Class="mt-2">
             <MudTextField @bind-Value="prompt"
                           Placeholder="Describe the SolidWorks task, then press Enter to send..."
                           Lines="3"
@@ -24,38 +24,54 @@
                           FullWidth="true"
                           Disabled="isBusy"
                           OnKeyDown="HandlePromptKeyDown" />
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SendAsync" Disabled="isBusy || string.IsNullOrWhiteSpace(prompt)">Send</MudButton>
-            <MudButton Variant="Variant.Outlined" Color="Color.Default" OnClick="StopCurrentOperation" Disabled="!isBusy">Stop</MudButton>
-        </MudStack>
 
-        <MudStack Row="true" Spacing="1" Class="mt-2">
-            <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="ConnectAsync" Disabled="isBusy">Connect</MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Warning" OnClick="ApprovePlan" Disabled="!hasPendingPlanApproval || isPlanApproved || isBusy">Approve</MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="RejectPlan" Disabled="!hasPendingPlanApproval || isBusy">Reject</MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Info" OnClick="ExecutePlanAsync" Disabled="!hasPendingPlanApproval || (!isPlanApproved && !awaitingStepApproval) || isBusy">@(awaitingStepApproval ? "Continue" : "Execute")</MudButton>
-            <MudButton Variant="Variant.Outlined" OnClick="StartNewChat" Disabled="runtime is null || isBusy">New Chat</MudButton>
-        </MudStack>
+            <MudGrid Spacing="1">
+                <MudItem xs="6" sm="3">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" OnClick="SendAsync" Disabled="isBusy || string.IsNullOrWhiteSpace(prompt)">Send</MudButton>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Default" FullWidth="true" OnClick="StopCurrentOperation" Disabled="!isBusy">Stop</MudButton>
+                </MudItem>
+                <MudItem xs="6" sm="3" md="2">
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" OnClick="ConnectAsync" Disabled="isBusy">Connect</MudButton>
+                </MudItem>
+                <MudItem xs="6" sm="3" md="2">
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning" FullWidth="true" OnClick="ApprovePlan" Disabled="!hasPendingPlanApproval || isPlanApproved || isBusy">Approve</MudButton>
+                </MudItem>
+                <MudItem xs="6" sm="3" md="2">
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" FullWidth="true" OnClick="RejectPlan" Disabled="!hasPendingPlanApproval || isBusy">Reject</MudButton>
+                </MudItem>
+                <MudItem xs="6" sm="3" md="2">
+                    <MudButton Variant="Variant.Filled" Color="Color.Info" FullWidth="true" OnClick="ExecutePlanAsync" Disabled="!hasPendingPlanApproval || (!isPlanApproved && !awaitingStepApproval) || isBusy">@(awaitingStepApproval ? "Continue" : "Execute")</MudButton>
+                </MudItem>
+                <MudItem xs="6" sm="3" md="2">
+                    <MudButton Variant="Variant.Outlined" FullWidth="true" OnClick="StartNewChat" Disabled="runtime is null || isBusy">New Chat</MudButton>
+                </MudItem>
+            </MudGrid>
 
-        <MudStack Row="true" Spacing="1" Class="mt-2">
-            <MudSelect T="string" Label="Demo" @bind-Value="selectedDemoName" Disabled="isBusy" Dense="true" Style="min-width:280px;">
-                @foreach (var sample in demoSamples)
-                {
-                    <MudSelectItem T="string" Value="@sample.Name">@sample.Name</MudSelectItem>
-                }
-            </MudSelect>
-            <MudButton Variant="Variant.Outlined" OnClick="RunSelectedDemoAsync" Disabled="isBusy || string.IsNullOrWhiteSpace(selectedDemoName)">Run Demo</MudButton>
+            <MudGrid Spacing="1">
+                <MudItem xs="12" sm="8">
+                    <MudSelect T="string" Label="Demo" @bind-Value="selectedDemoName" Disabled="isBusy" Dense="true" FullWidth="true">
+                        @foreach (var sample in demoSamples)
+                        {
+                            <MudSelectItem T="string" Value="@sample.Name">@sample.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudButton Variant="Variant.Outlined" FullWidth="true" OnClick="RunSelectedDemoAsync" Disabled="isBusy || string.IsNullOrWhiteSpace(selectedDemoName)">Run Demo</MudButton>
+                </MudItem>
+            </MudGrid>
         </MudStack>
-    </MudItem>
+    </MudTabPanel>
 
-    <MudItem xs="12" md="4">
-        <MudPaper Class="pa-3" Outlined="true">
+    <MudTabPanel Text="Settings">
+        <MudPaper Class="pa-3" Outlined="true" Style="max-height: calc(100dvh - 170px); overflow:auto;">
             <MudText Typo="Typo.subtitle1">Settings</MudText>
-            <MudTextField Label="Ollama URL" @bind-Value="ollamaUrl" Variant="Variant.Outlined" Class="mt-2" />
-            <MudTextField Label="Model" @bind-Value="model" Variant="Variant.Outlined" Class="mt-2" />
-            <MudTextField Label="MCP Args" @bind-Value="mcpArgs" Variant="Variant.Outlined" Class="mt-2" />
+            <MudTextField Label="Ai Box URL" @bind-Value="ollamaUrl" Variant="Variant.Outlined" Class="mt-2" FullWidth="true" />
+            <MudTextField Label="Model" @bind-Value="model" Variant="Variant.Outlined" Class="mt-2" FullWidth="true" />
+           @*  <MudTextField Label="MCP Args" @bind-Value="mcpArgs" Variant="Variant.Outlined" Class="mt-2" FullWidth="true" /> *@
             <MudCheckBox @bind-Value="humanInLoop" Label="Human-in-the-loop" Class="mt-2" />
-
-            <MudText Typo="Typo.body2" Class="mt-2">MCP command: @GetDefaultMcpCommandPath()</MudText>
 
             <InputFile OnChange="OnFileSelectedAsync" accept=".png,.jpg,.jpeg,.bmp,.webp" class="mt-2" />
             @if (!string.IsNullOrWhiteSpace(selectedImageDataUrl))
@@ -65,8 +81,8 @@
             <MudCheckBox @bind-Value="attachImage" Label="Attach image to prompt" Class="mt-2" />
             <MudButton Variant="Variant.Outlined" Class="mt-2" OnClick="SendImageDecodePromptAsync" Disabled="runtime is null || string.IsNullOrWhiteSpace(selectedImagePath) || isBusy">Decode + Plan CAD Steps</MudButton>
         </MudPaper>
-    </MudItem>
-</MudGrid>
+    </MudTabPanel>
+</MudTabs>
 
 @code {
     [Parameter] public EventCallback<string> OnStatusChanged { get; set; }
@@ -78,36 +94,49 @@
     };
 
     private readonly List<(string Role, string Message)> logEntries = [];
-    private static readonly (string Name, string Prompt)[] demoSamples =
+    private static readonly DemoSample[] demoSamples =
     [
-        ("4-Bar Linkage", "Create a complete parametric 4-bar linkage mechanism using available MCP tools only. Include parts, assembly, mates, rebuild checks, and drawing output summary."),
-        ("Simple Box", "Create a simple box part using available MCP tools only: create part, sketch centered rectangle, extrude, then save."),
-        ("Parametric Cylinder", "Create a parametric cylinder using available MCP tools only: create part, sketch circle, extrude, and link dimensions via equation where supported.")
+        new("Simple Box", "Create a simple box part : create part, sketch centered rectangle, extrude, then save.  Create drawing and dimension views"),
+        new("Parametric Cylinder", "Create a parametric cylinder using available MCP tools only: create part, sketch circle, extrude, and link dimensions via equation where supported."),
+        new("4-Bar Linkage", "Create a complete parametric 4-bar linkage mechanism using available MCP tools only. Include parts, assembly, mates, rebuild checks, and drawing output summary."),
+
     ];
 
     private ChatRuntime? runtime;
     private CancellationTokenSource? currentOperationCts;
 
     private string prompt = string.Empty;
-    private string ollamaUrl = "http://localhost:11434";
+    private string ollamaUrl = "http://aibox:11434";
     private string model = "qwen2.5-coder:14b";
     private string mcpArgs = string.Empty;
-    private string? selectedDemoName;
+    private string? selectedDemoName = demoSamples.Length > 0 ? demoSamples[0].Name : null;
 
     private string? selectedImagePath;
     private string? selectedImageDataUrl;
     private bool attachImage;
-    private bool humanInLoop;
+    private bool humanInLoop = true;
     private bool hasPendingPlanApproval;
     private bool isPlanApproved;
     private bool awaitingStepApproval;
     private bool isBusy;
 
+    private sealed record DemoSample(string Name, string Prompt);
+
     protected override void OnInitialized()
     {
-        selectedDemoName = demoSamples.Length > 0 ? demoSamples[0].Name : null;
-        AppendLog("system", "Open Settings, connect, and the client will validate Ollama + MCP before chat starts.");
+        AppendLog("system", "Connecting automatically using current Settings...");
         AppendLog("system", "Tip: Enter sends, Shift+Enter adds a line. Type /new to start a fresh chat.");
+        GetDefaultMcpCommandPath( );
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await ConnectAsync();
     }
 
     private async Task ConnectAsync()
@@ -125,11 +154,11 @@
         {
             var cancellationToken = currentOperationCts.Token;
             var ollamaStatus = await OllamaClient.TestConnectionAsync(ollamaUrl.Trim(), model.Trim(), cancellationToken);
-            AppendLog("system", $"Ollama reachable. Discovered {ollamaStatus.AvailableModelCount} model(s).");
+            AppendLog("system", $"Ai Box reachable. Discovered {ollamaStatus.AvailableModelCount} model(s).");
 
             if (!ollamaStatus.IsModelAvailable)
             {
-                AppendLog("error", $"Configured model '{model}' is not in Ollama tags.");
+                AppendLog("error", $"Configured model '{model}' is not available on Ai Box.");
             }
 
             var mcpCommand = GetDefaultMcpCommandPath();
@@ -143,8 +172,8 @@
             await runtime.InitializeAsync(cancellationToken);
 
             var mcpStatus = await runtime.TestMcpConnectionAsync(cancellationToken);
-            AppendLog("system", $"MCP connected. {mcpStatus.ToolCount} tool(s) available.");
-            AppendLog("plan", $"Tool catalog: {FormatToolList(mcpStatus.ToolNames)}");
+            AppendLog("system", $"MCP connected. {mcpStatus.ToolCount} capabilities available.");
+            AppendLog("plan", $"Available capabilities: {FormatToolList(mcpStatus.ToolNames)}");
 
             var warmup = await runtime.WarmupSolidWorksAsync(cancellationToken);
             AppendLog(warmup.Succeeded ? "system" : "error", warmup.Message);
@@ -162,6 +191,7 @@
             currentOperationCts?.Dispose();
             currentOperationCts = null;
             isBusy = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -225,15 +255,14 @@
             return;
         }
 
-        foreach (var sample in demoSamples)
+        var selectedDemo = demoSamples.FirstOrDefault(sample => string.Equals(sample.Name, selectedDemoName, StringComparison.Ordinal));
+        if (selectedDemo is null)
         {
-            if (string.Equals(sample.Name, selectedDemoName, StringComparison.Ordinal))
-            {
-                prompt = sample.Prompt;
-                await SendAsync();
-                return;
-            }
+            return;
         }
+
+        prompt = selectedDemo.Prompt;
+        await SendAsync();
     }
 
     private async Task SendPromptAsync(string userPrompt)
@@ -454,12 +483,13 @@
 
     private static Color GetColor(string role) => role switch
     {
-        "you" => Color.Info,
+        "you" => Color.Primary,
         "assistant" => Color.Default,
         "tool" => Color.Warning,
-        "plan" => Color.Secondary,
+        "plan" => Color.Info,
         "error" => Color.Error,
-        _ => Color.Success,
+        "system" => Color.Success,
+        _ => Color.Default,
     };
 
     private static string FormatToolList(IReadOnlyList<string> toolNames)
@@ -534,12 +564,7 @@
 
     private static string GetDefaultMcpCommandPath()
     {
-        var configuredPath = Environment.GetEnvironmentVariable("SOLIDWORKS_MCP_COMMAND");
-        if (!string.IsNullOrWhiteSpace(configuredPath))
-        {
-            return Path.GetFullPath(configuredPath);
-        }
-
+       
         var appFolderPath = Path.Combine(AppContext.BaseDirectory, "SolidworksMCP.exe");
 
 #if DEBUG

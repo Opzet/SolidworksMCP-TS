@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="AutoWorks.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SolidworksMCP\SolidworksMCP.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
@@ -19,9 +23,33 @@
     <PackageReference Include="MudBlazor" Version="9.*" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="AutoWorks_Icon.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
+
   <PropertyGroup>
     <McpExeName>SolidworksMCP.exe</McpExeName>
     <McpSourceDirectory>$(MSBuildProjectDirectory)\..\SolidworksMCP\bin\$(Configuration)\net9.0\</McpSourceDirectory>
+    <ApplicationIcon>AutoWorks.ico</ApplicationIcon>
+    <PackageIcon>AutoWorks_Icon.png</PackageIcon>
   </PropertyGroup>
 
   <Target Name="CopyMcpRuntimeToOutput" AfterTargets="Build">
@@ -29,10 +57,7 @@
       <McpRuntimeFiles Include="$(McpSourceDirectory)*" Condition="Exists('$(McpSourceDirectory)')" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(McpRuntimeFiles)"
-          DestinationFolder="$(OutputPath)"
-          SkipUnchangedFiles="true"
-          Condition="@(McpRuntimeFiles) != ''" />
+    <Copy SourceFiles="@(McpRuntimeFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="@(McpRuntimeFiles) != ''" />
   </Target>
 
   <Target Name="CopyMcpRuntimeToPublish" AfterTargets="Publish">
@@ -40,10 +65,7 @@
       <McpRuntimeFiles Include="$(McpSourceDirectory)*" Condition="Exists('$(McpSourceDirectory)')" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(McpRuntimeFiles)"
-          DestinationFolder="$(PublishDir)"
-          SkipUnchangedFiles="true"
-          Condition="@(McpRuntimeFiles) != ''" />
+    <Copy SourceFiles="@(McpRuntimeFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="@(McpRuntimeFiles) != ''" />
   </Target>
 
 </Project>
