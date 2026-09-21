@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-09-21T05:34:38.4894974\u002B00:00",
+  "level": "info",
+  "message": "State loaded from D:\\source\\repos\\SolidworksMCP-TS\\C#\\AutoWorks\\.solidworks-mcp-state.json",
+  "data": {
+    "totalResources": 0
+  }
+}
+{
+  "timestamp": "2026-09-21T05:34:38.7945617\u002B00:00",
+  "level": "info",
+  "message": "State store loaded",
+  "data": {
+    "totalResources": 0,
+    "byType": {},
+    "byStatus": {},
+    "oldestResource": null,
+    "newestResource": null
+  }
+}
+{
+  "timestamp": "2026-09-21T05:34:39.0446858\u002B00:00",
+  "level": "info",
+  "message": "Starting server shutdown..."
+}
+{
+  "timestamp": "2026-09-21T05:34:39.1250731\u002B00:00",
+  "level": "info",
+  "message": "Server shutdown complete"
+}

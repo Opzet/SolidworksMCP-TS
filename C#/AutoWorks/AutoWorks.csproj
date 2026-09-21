@@ -11,6 +11,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="..\SolidworksMCP\bin\Release\net9.0\SolidworksMCP.deps.json" Link="SolidworksMCP.deps.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\SolidworksMCP\bin\Release\net9.0\SolidworksMCP.runtimeconfig.json" Link="SolidworksMCP.runtimeconfig.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="AutoWorks.ico" />
   </ItemGroup>
 
@@ -19,8 +25,22 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="..\SolidworksMCP\bin\$(Configuration)\net9.0\SolidworksMCP.dll">
+      <TargetPath>SolidworksMCP.dll</TargetPath>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.WindowsForms" Version="9.0.0" />
     <PackageReference Include="MudBlazor" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="SolidworksMCP">
+      <HintPath>..\SolidworksMCP\bin\Release\net9.0\SolidworksMCP.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
@@ -46,26 +66,9 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <McpExeName>SolidworksMCP.exe</McpExeName>
-    <McpSourceDirectory>$(MSBuildProjectDirectory)\..\SolidworksMCP\bin\$(Configuration)\net9.0\</McpSourceDirectory>
     <ApplicationIcon>AutoWorks.ico</ApplicationIcon>
     <PackageIcon>AutoWorks_Icon.png</PackageIcon>
   </PropertyGroup>
 
-  <Target Name="CopyMcpRuntimeToOutput" AfterTargets="Build">
-    <ItemGroup>
-      <McpRuntimeFiles Include="$(McpSourceDirectory)*" Condition="Exists('$(McpSourceDirectory)')" />
-    </ItemGroup>
-
-    <Copy SourceFiles="@(McpRuntimeFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="@(McpRuntimeFiles) != ''" />
-  </Target>
-
-  <Target Name="CopyMcpRuntimeToPublish" AfterTargets="Publish">
-    <ItemGroup>
-      <McpRuntimeFiles Include="$(McpSourceDirectory)*" Condition="Exists('$(McpSourceDirectory)')" />
-    </ItemGroup>
-
-    <Copy SourceFiles="@(McpRuntimeFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="@(McpRuntimeFiles) != ''" />
-  </Target>
 
 </Project>

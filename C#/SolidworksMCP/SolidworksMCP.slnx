@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="../../README.md" />
+  </Folder>
   <Folder Name="/Typescript Documents/">
     <File Path="../../docs/ADAPTER_ARCHITECTURE.md" />
     <File Path="../../docs/ANALYSIS_INDEX.md" />

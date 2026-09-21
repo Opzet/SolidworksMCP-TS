@@ -81,6 +81,7 @@ public sealed class SolidWorksMcpServer
     private IReadOnlyList<McpToolDefinition> BuildTools()
     {
         var result = new List<McpToolDefinition>(ToolCatalog.GetAllTools(configuration));
+        result.Add(new McpToolDefinition("list_skills_and_capabilities", "List enabled, disabled, and missing skills with capability tags", JsonSchemaBuilder.Object(), HandleListSkills));
         result.AddRange(BuildMacroTools());
         result.AddRange(BuildResourceTools());
         return result;
@@ -112,6 +113,15 @@ public sealed class SolidWorksMcpServer
         return tools;
     }
 
+    private ValueTask<object?> HandleListSkills(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = arguments;
+        _ = api;
+        _ = cancellationToken;
+        var resources = ResourceRegistrySingleton.Instance.GetAllDefinitions();
+        return ValueTask.FromResult<object?>(SkillCatalog.Build(configuration, tools.Count, resources.Count));
+    }
+
     private void SetupMacroHandlers()
     {
         macroRecorder.RegisterActionHandler("create-sketch", action => new ValueTask<object?>(api.CreateSketch(action.Parameters)));
@@ -127,7 +137,22 @@ public sealed class SolidWorksMcpServer
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            var request = await ReadRequestAsync(reader, cancellationToken).ConfigureAwait(false);
+            JsonRpcRequest? request;
+            try
+            {
+                request = await ReadRequestAsync(reader, cancellationToken).ConfigureAwait(false);
+            }
+            catch (JsonException ex)
+            {
+                AppLogger.Warn("Failed to parse MCP request", ex.Message);
+                continue;
+            }
+            catch (InvalidOperationException ex)
+            {
+                AppLogger.Warn("Invalid MCP request framing", ex.Message);
+                continue;
+            }
+
             if (request is null)
             {
                 break;
@@ -250,12 +275,13 @@ public sealed class SolidWorksMcpServer
             {
                 name = serverName,
                 version = serverVersion,
-                description = "Enhanced SolidWorks MCP Server with macro recording, design tables, SQL integration, and PDM support",
+                description = "Enhanced SolidWorks MCP Server with macro recording, design tables, SQL integration, PDM support, and a skills catalog.",
             },
             capabilities = new
             {
                 tools = new { },
                 resources = new { },
+                skills = new { list = true },
             },
         };
     }

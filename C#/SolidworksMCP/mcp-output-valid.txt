@@ -1,0 +1,21 @@
+Content-Length: 461
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "serverInfo": {
+      "name": "solidworks-mcp-server",
+      "version": "1.0.0.0",
+      "description": "Enhanced SolidWorks MCP Server with macro recording, design tables, SQL integration, PDM support, and a skills catalog."
+    },
+    "capabilities": {
+      "tools": {},
+      "resources": {},
+      "skills": {
+        "list": true
+      }
+    }
+  }
+}

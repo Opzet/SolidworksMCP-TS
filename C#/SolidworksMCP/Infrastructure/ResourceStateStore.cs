@@ -165,28 +165,35 @@ public sealed class ResourceStateStore : IAsyncDisposable
             return;
         }
 
-        var json = await File.ReadAllTextAsync(stateFilePath, cancellationToken).ConfigureAwait(false);
-        var snapshot = JsonSerializer.Deserialize<StateSnapshot>(json, JsonHelpers.SerializerOptions);
-        if (snapshot is null)
-        {
-            return;
-        }
-
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            resources.Clear();
-            foreach (var state in snapshot.Resources)
+            var json = await File.ReadAllTextAsync(stateFilePath, cancellationToken).ConfigureAwait(false);
+            var snapshot = JsonSerializer.Deserialize<StateSnapshot>(json, JsonHelpers.SerializerOptions);
+            if (snapshot is null)
             {
-                resources[state.Id] = state;
+                return;
             }
-        }
-        finally
-        {
-            gate.Release();
-        }
 
-        AppLogger.Info($"State loaded from {stateFilePath}", new { totalResources = resources.Count });
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                resources.Clear();
+                foreach (var state in snapshot.Resources)
+                {
+                    resources[state.Id] = state;
+                }
+            }
+            finally
+            {
+                gate.Release();
+            }
+
+            AppLogger.Info($"State loaded from {stateFilePath}", new { totalResources = resources.Count });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLogger.Warn($"Failed to load state from {stateFilePath}, starting with empty state", ex.Message);
+        }
     }
 
     public StateSnapshot CreateSnapshot()

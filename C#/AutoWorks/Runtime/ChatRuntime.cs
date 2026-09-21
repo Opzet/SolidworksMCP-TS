@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 internal sealed class ChatRuntime : IDisposable
 {
     private const int MaxRounds = 8;
+    private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
     private const string SystemPrompt = "You are a SolidWorks CAD assistant for SolidWorks 2026 and newer only. Use MCP tools whenever CAD actions are required. Be deterministic. Do not plan for or mention compatibility with older SolidWorks versions, and do not suggest fallback workflows for prior releases. Before geometry edits, check document context with get_active_document_info and use list_reference_planes, list_sketches, list_sketch_segments, list_components, and list_dimensions when selection or stable handles are needed. Prefer declarative selection objects over implicit UI selection. For part creation workflows, first enumerate templates with list_part_templates (if available), then create_part or create_assembly as appropriate, then continue with create_sketch, add_line/add_circle/add_rectangle, add_relation, add_dimension, exit_sketch, create_extrusion, set_dimension, insert_component, add_mate, and drawing tools as needed. Plans must explicitly include save/status/rebuild verification by using get_active_document_info before major actions, get_sketch_status while constraining sketches, get_rebuild_status or rebuild_model after geometry or mate changes, save_document when an unsaved document first needs a durable file path, save_active_document only for later in-place saves, and capture_screenshot after meaningful CAD changes when visual feedback would help the model inspect the result. Never invent placeholder paths such as C:/path/to/save/... . Use a real output path only when one is known or has been requested; otherwise ask for a save location or skip save/export steps and explain why. When using sketch selection, prefer the stable handles returned by list_sketch_segments and list_sketches instead of made-up names. If a required capability is unavailable, clearly state the limitation and continue with available SolidWorks 2026+ tools.";
 
     private readonly ChatSettings settings;
@@ -33,6 +34,19 @@ internal sealed class ChatRuntime : IDisposable
     {
         var toolNames = await mcp.ListToolNamesAsync(cancellationToken).ConfigureAwait(false);
         return new McpConnectionStatus(toolNames.Count, toolNames);
+    }
+
+    public async Task<SkillCatalogSnapshot> GetSkillCatalogAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await mcp.CallToolAsync("list_skills_and_capabilities", new JsonObject(), cancellationToken).ConfigureAwait(false);
+        var payload = result.StructuredData ?? ParseSkillCatalogPayload(result.DisplayText);
+        if (payload is null)
+        {
+            throw new InvalidOperationException("MCP skills catalog payload was empty or invalid.");
+        }
+
+        return JsonSerializer.Deserialize<SkillCatalogSnapshot>(payload.ToJsonString(), WebJsonOptions)
+            ?? throw new InvalidOperationException("Failed to parse MCP skills catalog payload.");
     }
 
     public async Task<SolidWorksWarmupStatus> WarmupSolidWorksAsync(CancellationToken cancellationToken = default)
@@ -585,6 +599,23 @@ internal sealed class ChatRuntime : IDisposable
         try
         {
             return JsonNode.Parse(jsonText, documentOptions: LenientJsonOptions) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static JsonObject? ParseSkillCatalogPayload(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<JsonObject>(content, WebJsonOptions);
         }
         catch (JsonException)
         {

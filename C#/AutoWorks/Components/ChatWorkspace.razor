@@ -65,6 +65,94 @@
         </MudStack>
     </MudTabPanel>
 
+    <MudTabPanel Text="Skills">
+        <MudPaper Class="pa-3" Outlined="true" Style="max-height: calc(100dvh - 170px); overflow:auto;">
+            <MudText Typo="Typo.subtitle1">Skills and capabilities</MudText>
+            @if (skillCatalog is null)
+            {
+                <MudText Typo="Typo.body2" Class="mt-2">Connect to MCP to load the current skill catalog.</MudText>
+            }
+            else
+            {
+                <MudGrid Class="mt-2" Spacing="2">
+                    <MudItem xs="12" md="4">
+                        <MudPaper Class="pa-3" Outlined="true">
+                            <MudText Typo="Typo.subtitle2">Enabled skills (@skillCatalog.EnabledSkills.Count)</MudText>
+                            @if (skillCatalog.EnabledSkills.Count == 0)
+                            {
+                                <MudText Typo="Typo.body2">None</MudText>
+                            }
+                            else
+                            {
+                                <MudChipSet T="string" Class="mt-2">
+                                    @foreach (var skill in skillCatalog.EnabledSkills)
+                                    {
+                                        <MudChip T="string" Color="Color.Success" Variant="Variant.Outlined">@skill</MudChip>
+                                    }
+                                </MudChipSet>
+                            }
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudPaper Class="pa-3" Outlined="true">
+                            <MudText Typo="Typo.subtitle2">Missing skills (@skillCatalog.MissingSkills.Count)</MudText>
+                            @if (skillCatalog.MissingSkills.Count == 0)
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Success">None</MudText>
+                            }
+                            else
+                            {
+                                <MudChipSet T="string" Class="mt-2">
+                                    @foreach (var skill in skillCatalog.MissingSkills)
+                                    {
+                                        <MudChip T="string" Color="Color.Error" Variant="Variant.Filled">@skill</MudChip>
+                                    }
+                                </MudChipSet>
+                            }
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudPaper Class="pa-3" Outlined="true">
+                            <MudText Typo="Typo.subtitle2">Capabilities (@skillCatalog.Capabilities.Count)</MudText>
+                            @if (skillCatalog.Capabilities.Count == 0)
+                            {
+                                <MudText Typo="Typo.body2">None</MudText>
+                            }
+                            else
+                            {
+                                <MudChipSet T="string" Class="mt-2">
+                                    @foreach (var capability in skillCatalog.Capabilities)
+                                    {
+                                        <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">@capability</MudChip>
+                                    }
+                                </MudChipSet>
+                            }
+                        </MudPaper>
+                    </MudItem>
+                </MudGrid>
+
+                <MudTable T="SkillCatalogEntry" Items="@skillCatalog.Skills" Dense="true" Hover="true" Bordered="true" Striped="true" Class="mt-3">
+                    <HeaderContent>
+                        <MudTh>Skill</MudTh>
+                        <MudTh>Category</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh>Capabilities</MudTh>
+                        <MudTh>Description</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Skill">@context.Label</MudTd>
+                        <MudTd DataLabel="Category">@context.Category</MudTd>
+                        <MudTd DataLabel="Status">
+                            <MudChip T="string" Color="@GetSkillStatusColor(context.Status)" Variant="Variant.Filled">@context.Status</MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Capabilities">@string.Join(", ", context.Capabilities)</MudTd>
+                        <MudTd DataLabel="Description">@context.Description</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudPaper>
+    </MudTabPanel>
+
     <MudTabPanel Text="Settings">
         <MudPaper Class="pa-3" Outlined="true" Style="max-height: calc(100dvh - 170px); overflow:auto;">
             <MudText Typo="Typo.subtitle1">Settings</MudText>
@@ -103,6 +191,7 @@
     ];
 
     private ChatRuntime? runtime;
+    private SkillCatalogSnapshot? skillCatalog;
     private CancellationTokenSource? currentOperationCts;
 
     private string prompt = string.Empty;
@@ -174,6 +263,18 @@
             var mcpStatus = await runtime.TestMcpConnectionAsync(cancellationToken);
             AppendLog("system", $"MCP connected. {mcpStatus.ToolCount} capabilities available.");
             AppendLog("plan", $"Available capabilities: {FormatToolList(mcpStatus.ToolNames)}");
+
+            try
+            {
+                skillCatalog = await runtime.GetSkillCatalogAsync(cancellationToken);
+                AppendLog("system", $"Enabled skills: {FormatSkillList(skillCatalog.EnabledSkills)}");
+                AppendLog("warning", $"Missing skills: {FormatSkillList(skillCatalog.MissingSkills)}");
+            }
+            catch (Exception ex)
+            {
+                skillCatalog = null;
+                AppendLog("warning", $"Skill catalog unavailable: {ex.Message}");
+            }
 
             var warmup = await runtime.WarmupSolidWorksAsync(cancellationToken);
             AppendLog(warmup.Succeeded ? "system" : "error", warmup.Message);
@@ -487,6 +588,7 @@
         "assistant" => Color.Default,
         "tool" => Color.Warning,
         "plan" => Color.Info,
+        "warning" => Color.Warning,
         "error" => Color.Error,
         "system" => Color.Success,
         _ => Color.Default,
@@ -520,6 +622,16 @@
 
         return builder.ToString();
     }
+
+    private static string FormatSkillList(IReadOnlyList<string> skillNames)
+        => skillNames.Count == 0 ? "None" : string.Join(", ", skillNames);
+
+    private static Color GetSkillStatusColor(string status) => status switch
+    {
+        "enabled" => Color.Success,
+        "disabled" => Color.Warning,
+        _ => Color.Error,
+    };
 
     private static string[] SplitCommandLine(string commandLine)
     {

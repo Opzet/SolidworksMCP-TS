@@ -1,192 +1,166 @@
-# SolidWorks MCP Server
+# AutoWorks - SolidWorks MCP Server and Chat Client in C#
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green?logo=anthropic)](https://modelcontextprotocol.io)
-[![Node.js](https://img.shields.io/badge/Node.js-20+-green?logo=node.js)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://www.microsoft.com/windows)
 
-A Node.js MCP server for automating SolidWorks via COM interop. Connects AI assistants (Claude Desktop, etc.) to SolidWorks for CAD automation tasks.
+AutoWorks is a C# desktop port of the SolidWorks MCP workflow. It includes a Windows desktop client and a local MCP server that automates SolidWorks through COM interop.
 
 > **Project Status: Alpha / Experimental**
 >
-> This project is under active development. While the architecture is in place and basic operations (sketch planes, simple extrusions) have been demonstrated, **most tools have not been validated against a live SolidWorks instance**. Expect rough edges, COM quirks, and incomplete functionality. Contributions and testing reports are very welcome.
+> The C# port is active and still being validated against SolidWorks 2026. Expect rough edges, COM quirks, and incomplete coverage in some tool areas.
 
 ## How It Works
 
-The server exposes SolidWorks operations as MCP tools over stdio. An intelligent routing layer handles a key limitation of Node.js COM bridges: methods with 13+ parameters often fail via direct COM calls.
+The solution is split into two main apps:
 
-- **Simple operations (12 params or fewer)** - Direct COM call via `winax`
-- **Complex operations (13+ params)** - Auto-generated VBA macro executed by SolidWorks
-- **Failed operations** - Automatic fallback with error context
+- **AutoWorks** - the Windows desktop chat client and orchestrator
+- **SolidworksMCP** - the local MCP server process launched over stdio
+
+The server exposes SolidWorks operations as MCP tools over stdio. The client connects to that process, displays status, and routes user prompts into tool calls.
+
+### Routing model
+
+- **Preferred path**: direct COM calls for supported and stable SolidWorks API operations
+- **Explicit macro tools**: VBA generation / native macro features exist as separate tools for macro authoring and execution
+- **Failure handling**: operations return structured error context so the client can show what failed and why
+
+This repo does **not** use the old TypeScript / Node.js runtime path.
 
 ## Prerequisites
 
-- **Windows 10/11** (required - COM interop is Windows-only)
-- **SolidWorks 2021-2025** (licensed, installed)
-- **Node.js 20+**
-- An MCP-compatible client (Claude Desktop, etc.)
+- **Windows 10/11**
+- **SolidWorks 2026** installed and licensed
+- **.NET 9 SDK**
+- A compatible MCP client or the included **AutoWorks** desktop app
 
-## Installation
+## Solution structure
 
-```bash
-git clone https://github.com/vespo92/SolidworksMCP-TS.git
-cd SolidworksMCP-TS
+- `C#\AutoWorks` - Windows desktop chat client built with WinForms + Blazor WebView + MudBlazor
+- `C#\SolidworksMCP` - local MCP server that talks to SolidWorks via COM
+- `C#\SolidworksMCP.Tests` - automated tests
 
-# Install dependencies (compiles winax native module for your system)
-npm install
+## Build and run
 
-# Build TypeScript
-npm run build
+1. Open `C#\SolidworksMCP\SolidworksMCP.slnx` in Visual Studio.
+2. Set **AutoWorks** as the startup project for the desktop client experience.
+3. Build the solution.
+4. Launch AutoWorks and connect it to the local `SolidworksMCP.exe` process.
+
+For publish scenarios, build the `SolidworksMCP` server first and then publish `AutoWorks` so the server runtime files are copied into the published output.
+
+## Configuration
+
+The server reads these environment variables:
+
+- `SOLIDWORKS_PATH`
+- `ENABLE_MACRO_RECORDING`
+- `ENABLE_PDM`
+- `PDM_VAULT`
+- `SQL_CONNECTION`
+- `STATE_FILE`
+- `SW_MCP_OUTPUT_ROOT`
+- `LOG_LEVEL`
+
+## Available capabilities
+
+The server registers tools across these categories:
+
+| Category | Example tools | Status |
+|----------|---------------|--------|
+| **Modeling** | `create_part`, `create_assembly`, `save_document`, `rebuild_model`, `create_extrusion`, `create_revolve` | Actively developed |
+| **Sketch** | `create_sketch`, `add_line`, `add_circle`, `add_rectangle`, `list_sketches`, `list_sketch_segments` | Actively developed |
+| **Drawing** | `create_drawing_from_model`, `add_drawing_view`, `add_section_view`, `list_sheets`, `list_drawing_views` | Actively developed |
+| **Analysis** | `get_mass_properties`, `check_interference`, `measure_distance`, `check_geometry` | Actively developed |
+| **Export** | `export_file`, `batch_export`, `capture_screenshot` | Actively developed |
+| **Macro / VBA** | `generate_vba_script`, `create_feature_vba`, `create_batch_vba`, `macro_start_recording`, `macro_stop_recording` | Available |
+| **Template Manager** | `extract_drawing_template`, `apply_drawing_template`, `save_drawing_template` | Available |
+| **Resources** | `design-table`, `pdm-configuration` | Available / optional |
+
+## Missing skills / planned areas
+
+The client also shows the current missing skill areas explicitly so gaps stay visible during development.
+
+Missing skills currently tracked:
+
+- `diagnostics`
+- `drawing-analysis`
+- `enhanced-drawing`
+- `extrusion-helper`
+- `macro-security`
+- `vba-advanced`
+- `vba-assembly`
+- `vba-drawing`
+- `vba-file-management`
+- `vba-part`
+
+## Architecture
+
+```text
+AutoWorks (desktop client)
+    |
+    | launches
+    v
+SolidworksMCP.exe  --stdio-->  MCP transport
+    |
+    | direct COM interop
+    v
+SolidWorks COM API
 ```
 
-> **Note:** The `winax` native module must be compiled locally on each Windows machine. Global npm installation does not work.
+## Key design decisions
 
-## Configure Claude Desktop
+- **Direct COM first**: supported SolidWorks API calls are invoked directly when the interop path is stable.
+- **No blanket VBA fallback**: VBA generation is available as an explicit capability, but it is not used to hide unclear COM failures.
+- **Clear COM diagnostics**: failures should surface the real COM or SolidWorks error context.
+- **Avoid `null` for optional COM arguments** where the bridge expects omission/`undefined` semantics.
+- **Prefer feature-tree traversal for discovery**: use `FeatureByPositionReverse()` and `GetTypeName2()` where it is more reliable than `SelectByID2`.
+- **StdIO logging discipline**: do not write `console.*` style output on the MCP transport path; keep transport messages clean.
 
-Add to your `claude_desktop_config.json`:
+## What has been validated
+
+Based on local development testing:
+
+- Connecting to a running SolidWorks instance via COM
+- Creating sketch planes and basic sketch geometry
+- Simple extrusions with limited parameters
+- Feature-tree traversal for sketch discovery
+- VBA generation helpers for explicit macro tools
+
+## Known limitations
+
+- SolidWorks tool coverage is still incomplete.
+- Some tool areas are only partially validated on real SolidWorks 2026.
+- Performance and resiliency testing is still limited.
+- CI is not yet running full SolidWorks integration tests.
+
+## Claude Desktop / external MCP clients
+
+Use the published `SolidworksMCP.exe` as the command in your MCP client configuration.
 
 ```json
 {
   "mcpServers": {
     "solidworks": {
-      "command": "node",
-      "args": ["C:/path/to/SolidworksMCP-TS/dist/index.js"],
+      "command": "C:\\path\\to\\publish\\SolidworksMCP.exe",
+      "args": [],
       "env": {
         "SOLIDWORKS_PATH": "C:\\Program Files\\SOLIDWORKS Corp\\SOLIDWORKS",
-        "ADAPTER_TYPE": "winax-enhanced"
+        "LOG_LEVEL": "info"
       }
     }
   }
 }
 ```
 
-## Available Tools
-
-The server registers tools across these categories:
-
-| Category | Tools | Status |
-|----------|-------|--------|
-| **Modeling** | create_part, create_extrusion, create_revolve, create_sweep, create_loft, create_fillet, create_chamfer, etc. | Partially tested |
-| **Sketch** | create_sketch, add_line, add_circle, add_rectangle, add_arc, add_constraints, dimension_sketch | Basic ops verified |
-| **Drawing** | create_drawing_from_model, add_drawing_view, add_section_view, add_dimensions, etc. | Untested |
-| **Export** | export_file (STEP, IGES, STL, PDF, DWG, DXF), batch_export | Untested |
-| **Analysis** | get_mass_properties, check_interference, measure_distance, check_geometry | Untested |
-| **VBA Generation** | generate_vba_script, vba_sheet_metal, vba_configurations, vba_equations, etc. | Code generation works; execution untested |
-| **Macro** | macro_start_recording, macro_stop_recording, macro_export_vba | Untested |
-
-**"Partially tested"** means the tool has been run against SolidWorks at least once but not comprehensively. **"Untested"** means only mock/unit tests exist (if any).
-
-## Architecture
-
-```
-MCP Protocol (stdio)
-    |
-Tool Registry (index.ts)
-    |
-Feature Complexity Analyzer --- routes by param count
-    |                    |
-Direct COM (winax)    VBA Macro Generator
-    |                    |
-    +--------------------+
-    |
-SolidWorks COM API
-```
-
-### Key Design Decisions
-
-- **COM parameter limit workaround**: SolidWorks API methods like `FeatureExtrusion3` take 20+ parameters. Node.js COM bridges choke on these. The complexity analyzer detects this and generates a VBA macro instead.
-- **Never pass `null` to COM**: Use `undefined` for optional parameters. COM interprets `null` as `VT_NULL`, causing type mismatch errors (this was the root cause of SelectByID2 failures).
-- **Feature tree traversal over SelectByID2**: `FeatureByPositionReverse()` + `GetTypeName2()` is more reliable for finding sketches than `SelectByID2`.
-- **Winston logger only**: Never use `console.*` - it corrupts the JSON-RPC stdio transport.
-
-## Development
-
-```bash
-npm run build        # TypeScript compile
-npm run dev          # Hot-reload dev server (tsx watch)
-npm run check        # TypeScript + Biome lint in one command
-npm run lint         # Biome lint check
-npm run lint:fix     # Biome auto-fix
-npm run format       # Biome format
-npm run typecheck    # Type check without emit
-```
-
-## Testing
-
-See [TESTING.md](TESTING.md) for the full testing guide.
-
-```bash
-# Unit tests (mock adapter, no SolidWorks needed)
-USE_MOCK_SOLIDWORKS=true npm test
-
-# Watch mode
-npm run test:watch
-```
-
-**Current test status**: Unit tests exist for config and environment utilities. Most tool modules lack test coverage. Integration tests require a Windows machine with SolidWorks and have not been run in CI.
-
-## Known Issues & Limitations
-
-- **No CI integration testing** - Tests only run against mocks. Real SolidWorks integration tests require a self-hosted Windows runner that doesn't exist yet.
-- **winax compilation** - Must be compiled locally on each machine. No pre-built binaries.
-- **Edge.js adapter** - Defined in architecture but not implemented.
-- **PowerShell bridge** - Defined in architecture but not implemented.
-- **Connection pooling / circuit breaker** - Referenced in code but not battle-tested.
-- **Performance metrics are unverified** - No real benchmarking has been done.
-
-## What Has Worked
-
-Based on development testing:
-
-- Connecting to a running SolidWorks instance via COM
-- Creating sketch planes and basic sketch geometry
-- Simple extrusions with limited parameters
-- Feature tree traversal for sketch selection
-- VBA macro code generation (execution path needs more testing)
-
 ## Roadmap
 
 - [ ] Comprehensive integration test suite on real SolidWorks
-- [ ] CI with self-hosted Windows runner
-- [ ] Validate all modeling tools end-to-end
-- [ ] Validate drawing and export tools
-- [ ] Edge.js adapter for .NET runtime path
-- [ ] PowerShell bridge as alternative COM path
+- [ ] CI with a self-hosted Windows runner
+- [ ] End-to-end validation of all modeling tools
+- [ ] End-to-end validation of drawing and export tools
+- [ ] Better diagnostics for fragile COM calls
 - [ ] Performance benchmarking with real metrics
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-Key areas where help is needed:
-
-- **Testing against real SolidWorks** - The biggest gap. If you have SolidWorks, running tools and reporting results is extremely valuable.
-- **COM interop edge cases** - Different SolidWorks versions behave differently.
-- **Additional tool implementations** - Many SolidWorks API methods aren't exposed yet.
-
-## Troubleshooting
-
-For `winax` native build failures on Windows 11 Build 26200+ / VS 2022
-BuildTools 17.14+ (issue #23) and other install-time problems, see
-[TROUBLESHOOTING.md](TROUBLESHOOTING.md).
-
-### COM Registration Issues
-```powershell
-regsvr32 "C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\sldworks.tlb"
-```
-
-### Build Issues
-```bash
-rm -rf node_modules dist
-npm install
-npm run build
-```
-
-### Debug Logging
-```bash
-ENABLE_LOGGING=true LOG_LEVEL=debug node dist/index.js
-```
 
 ## License
 
@@ -194,6 +168,6 @@ MIT - See [LICENSE](LICENSE)
 
 ## Acknowledgments
 
-- [winax](https://github.com/nicedreams/node-activex) - COM bridge for Node.js
-- [Anthropic MCP](https://modelcontextprotocol.io) - Model Context Protocol
+- [Anthropic MCP](https://modelcontextprotocol.io)
 - SolidWorks API documentation
+- The C# / .NET desktop stack used by AutoWorks
