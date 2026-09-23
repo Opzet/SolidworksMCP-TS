@@ -8,6 +8,7 @@ public static class ToolCatalog
         tools.AddRange(ModelingTools.GetTools());
         tools.AddRange(DrawingTools.GetTools());
         tools.AddRange(SketchTools.GetTools());
+        tools.AddRange(ImageTraceTools.GetTools());
         tools.AddRange(ExportTools.GetTools());
         tools.AddRange(VbaTools.GetTools());
         tools.AddRange(AnalysisTools.GetTools());

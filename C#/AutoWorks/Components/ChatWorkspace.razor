@@ -8,6 +8,21 @@
 <MudTabs Class="pa-2" Rounded="true" Elevation="1">
     <MudTabPanel Text="Chat">
         <MudStack Spacing="2" Style="height: calc(100dvh - 170px); overflow: auto;">
+            <MudPaper Class="pa-3" Outlined="true">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <MudStack Spacing="0">
+                        <MudText Typo="Typo.subtitle2">Connection</MudText>
+                        <MudText Typo="Typo.body2">@connectionStatus</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@connectionDetail</MudText>
+                    </MudStack>
+                    <MudChip T="string" Color="@GetConnectionStatusColor()" Variant="Variant.Filled">@GetConnectionBadgeLabel()</MudChip>
+                </MudStack>
+                @if (isConnecting)
+                {
+                    <MudProgressLinear Class="mt-2" Color="Color.Info" Indeterminate="true" />
+                }
+            </MudPaper>
+
             <MudPaper Class="pa-3" Outlined="true" Style="min-height: 180px; max-height: 55dvh; overflow:auto;">
                 @foreach (var entry in logEntries)
                 {
@@ -22,44 +37,59 @@
                           Lines="3"
                           Variant="Variant.Outlined"
                           FullWidth="true"
-                          Disabled="isBusy"
+                          Disabled="!CanUseConnectedFeatures || isBusy"
                           OnKeyDown="HandlePromptKeyDown" />
 
             <MudGrid Spacing="1">
                 <MudItem xs="6" sm="3">
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" OnClick="SendAsync" Disabled="isBusy || string.IsNullOrWhiteSpace(prompt)">Send</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" OnClick="SendAsync" Disabled="!CanUseConnectedFeatures || isBusy || string.IsNullOrWhiteSpace(prompt)">Send</MudButton>
                 </MudItem>
                 <MudItem xs="6" sm="3">
                     <MudButton Variant="Variant.Outlined" Color="Color.Default" FullWidth="true" OnClick="StopCurrentOperation" Disabled="!isBusy">Stop</MudButton>
                 </MudItem>
                 <MudItem xs="6" sm="3" md="2">
-                    <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" OnClick="ConnectAsync" Disabled="isBusy">Connect</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" OnClick="ConnectAsync" Disabled="isBusy">@GetConnectButtonLabel()</MudButton>
                 </MudItem>
                 <MudItem xs="6" sm="3" md="2">
-                    <MudButton Variant="Variant.Filled" Color="Color.Warning" FullWidth="true" OnClick="ApprovePlan" Disabled="!hasPendingPlanApproval || isPlanApproved || isBusy">Approve</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning" FullWidth="true" OnClick="ApprovePlan" Disabled="!CanUseConnectedFeatures || !hasPendingPlanApproval || isPlanApproved || isBusy">Approve</MudButton>
                 </MudItem>
                 <MudItem xs="6" sm="3" md="2">
-                    <MudButton Variant="Variant.Filled" Color="Color.Error" FullWidth="true" OnClick="RejectPlan" Disabled="!hasPendingPlanApproval || isBusy">Reject</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" FullWidth="true" OnClick="RejectPlan" Disabled="!CanUseConnectedFeatures || !hasPendingPlanApproval || isBusy">Reject</MudButton>
                 </MudItem>
                 <MudItem xs="6" sm="3" md="2">
-                    <MudButton Variant="Variant.Filled" Color="Color.Info" FullWidth="true" OnClick="ExecutePlanAsync" Disabled="!hasPendingPlanApproval || (!isPlanApproved && !awaitingStepApproval) || isBusy">@(awaitingStepApproval ? "Continue" : "Execute")</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Info" FullWidth="true" OnClick="ExecutePlanAsync" Disabled="!CanUseConnectedFeatures || !hasPendingPlanApproval || (!isPlanApproved && !awaitingStepApproval) || isBusy">@(awaitingStepApproval ? "Continue" : "Execute")</MudButton>
                 </MudItem>
                 <MudItem xs="6" sm="3" md="2">
-                    <MudButton Variant="Variant.Outlined" FullWidth="true" OnClick="StartNewChat" Disabled="runtime is null || isBusy">New Chat</MudButton>
+                    <MudButton Variant="Variant.Outlined" FullWidth="true" OnClick="StartNewChat" Disabled="!CanUseConnectedFeatures || isBusy">New Chat</MudButton>
                 </MudItem>
             </MudGrid>
 
             <MudGrid Spacing="1">
                 <MudItem xs="12" sm="8">
-                    <MudSelect T="string" Label="Demo" @bind-Value="selectedDemoName" Disabled="isBusy" Dense="true" FullWidth="true">
-                        @foreach (var sample in demoSamples)
-                        {
-                            <MudSelectItem T="string" Value="@sample.Name">@sample.Name</MudSelectItem>
-                        }
-                    </MudSelect>
+                    <MudStack Spacing="1">
+                        <MudText Typo="Typo.caption">Demo</MudText>
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" OnClick="ToggleDemoPicker" Disabled="!CanUseConnectedFeatures || isBusy">
+                            @GetSelectedDemoLabel()
+                        </MudButton>
+                        <MudCollapse Expanded="isDemoPickerOpen">
+                            <MudPaper Outlined="true" Class="pa-1">
+                                <MudStack Spacing="1">
+                                    @foreach (var sample in demoSamples)
+                                    {
+                                        <MudButton Variant="@(string.Equals(selectedDemoName, sample.Name, StringComparison.Ordinal) ? Variant.Filled : Variant.Text)"
+                                                   Color="@(string.Equals(selectedDemoName, sample.Name, StringComparison.Ordinal) ? Color.Primary : Color.Default)"
+                                                   FullWidth="true"
+                                                   OnClick="@(() => SelectDemo(sample.Name))">
+                                            @sample.Name
+                                        </MudButton>
+                                    }
+                                </MudStack>
+                            </MudPaper>
+                        </MudCollapse>
+                    </MudStack>
                 </MudItem>
                 <MudItem xs="12" sm="4">
-                    <MudButton Variant="Variant.Outlined" FullWidth="true" OnClick="RunSelectedDemoAsync" Disabled="isBusy || string.IsNullOrWhiteSpace(selectedDemoName)">Run Demo</MudButton>
+                    <MudButton Variant="Variant.Outlined" FullWidth="true" OnClick="RunSelectedDemoAsync" Disabled="!CanUseConnectedFeatures || isBusy || string.IsNullOrWhiteSpace(selectedDemoName)">Run Demo</MudButton>
                 </MudItem>
             </MudGrid>
         </MudStack>
@@ -153,21 +183,27 @@
         </MudPaper>
     </MudTabPanel>
 
+    <MudTabPanel Text="Tools">
+        <MudPaper Class="pa-3" Outlined="true" Style="max-height: calc(100dvh - 170px); overflow:auto;">
+            <ToolValidationPanel Runtime="runtime" SkillCatalog="skillCatalog" />
+        </MudPaper>
+    </MudTabPanel>
+
     <MudTabPanel Text="Settings">
         <MudPaper Class="pa-3" Outlined="true" Style="max-height: calc(100dvh - 170px); overflow:auto;">
             <MudText Typo="Typo.subtitle1">Settings</MudText>
-            <MudTextField Label="Ai Box URL" @bind-Value="ollamaUrl" Variant="Variant.Outlined" Class="mt-2" FullWidth="true" />
-            <MudTextField Label="Model" @bind-Value="model" Variant="Variant.Outlined" Class="mt-2" FullWidth="true" />
+            <MudTextField Label="Ai Box URL" @bind-Value="ollamaUrl" Variant="Variant.Outlined" Class="mt-2" FullWidth="true" Disabled="isBusy" />
+            <MudTextField Label="Model" @bind-Value="model" Variant="Variant.Outlined" Class="mt-2" FullWidth="true" Disabled="isBusy" />
            @*  <MudTextField Label="MCP Args" @bind-Value="mcpArgs" Variant="Variant.Outlined" Class="mt-2" FullWidth="true" /> *@
-            <MudCheckBox @bind-Value="humanInLoop" Label="Human-in-the-loop" Class="mt-2" />
+            <MudCheckBox @bind-Value="humanInLoop" Label="Human-in-the-loop" Class="mt-2" Disabled="isBusy" />
 
-            <InputFile OnChange="OnFileSelectedAsync" accept=".png,.jpg,.jpeg,.bmp,.webp" class="mt-2" />
+            <InputFile OnChange="OnFileSelectedAsync" accept=".png,.jpg,.jpeg,.bmp,.webp" class="mt-2" disabled="@isBusy" />
             @if (!string.IsNullOrWhiteSpace(selectedImageDataUrl))
             {
                 <MudImage Src="@selectedImageDataUrl" Alt="preview" Style="width:100%;" Class="mt-2" />
             }
-            <MudCheckBox @bind-Value="attachImage" Label="Attach image to prompt" Class="mt-2" />
-            <MudButton Variant="Variant.Outlined" Class="mt-2" OnClick="SendImageDecodePromptAsync" Disabled="runtime is null || string.IsNullOrWhiteSpace(selectedImagePath) || isBusy">Decode + Plan CAD Steps</MudButton>
+            <MudCheckBox @bind-Value="attachImage" Label="Attach image to prompt" Class="mt-2" Disabled="isBusy || string.IsNullOrWhiteSpace(selectedImagePath)" />
+            <MudButton Variant="Variant.Outlined" Class="mt-2" OnClick="SendImageDecodePromptAsync" Disabled="!CanUseConnectedFeatures || string.IsNullOrWhiteSpace(selectedImagePath) || isBusy">Decode + Plan CAD Steps</MudButton>
         </MudPaper>
     </MudTabPanel>
 </MudTabs>
@@ -199,15 +235,22 @@
     private string model = "qwen2.5-coder:14b";
     private string mcpArgs = string.Empty;
     private string? selectedDemoName = demoSamples.Length > 0 ? demoSamples[0].Name : null;
+    private string connectionStatus = "Status: disconnected";
+    private string connectionDetail = "Connect to Ai Box and MCP to enable chat, demos, and image workflows.";
+    private bool isConnected;
+    private bool isConnecting;
+    private bool isDemoPickerOpen;
 
     private string? selectedImagePath;
     private string? selectedImageDataUrl;
     private bool attachImage;
-    private bool humanInLoop = true;
+    private bool humanInLoop = false;
     private bool hasPendingPlanApproval;
     private bool isPlanApproved;
     private bool awaitingStepApproval;
     private bool isBusy;
+
+    private bool CanUseConnectedFeatures => runtime is not null && isConnected && !isConnecting;
 
     private sealed record DemoSample(string Name, string Prompt);
 
@@ -226,6 +269,7 @@
         }
 
         await ConnectAsync();
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task ConnectAsync()
@@ -236,14 +280,18 @@
         }
 
         isBusy = true;
+        isConnecting = true;
+        isConnected = false;
         currentOperationCts = new CancellationTokenSource();
-        await OnStatusChanged.InvokeAsync("Status: connecting...");
+        await SetConnectionStatusAsync("Status: connecting...", "Validating Ai Box, launching MCP, and warming SolidWorks.", false);
+        await InvokeAsync(StateHasChanged);
 
         try
         {
             var cancellationToken = currentOperationCts.Token;
             var ollamaStatus = await OllamaClient.TestConnectionAsync(ollamaUrl.Trim(), model.Trim(), cancellationToken);
             AppendLog("system", $"Ai Box reachable. Discovered {ollamaStatus.AvailableModelCount} model(s).");
+            connectionDetail = $"Ai Box reachable. Launching MCP with {ollamaStatus.AvailableModelCount} discovered model(s).";
 
             if (!ollamaStatus.IsModelAvailable)
             {
@@ -263,6 +311,7 @@
             var mcpStatus = await runtime.TestMcpConnectionAsync(cancellationToken);
             AppendLog("system", $"MCP connected. {mcpStatus.ToolCount} capabilities available.");
             AppendLog("plan", $"Available capabilities: {FormatToolList(mcpStatus.ToolNames)}");
+            connectionDetail = $"MCP connected. {mcpStatus.ToolCount} capabilities available. Loading skills and warming SolidWorks.";
 
             try
             {
@@ -278,20 +327,28 @@
 
             var warmup = await runtime.WarmupSolidWorksAsync(cancellationToken);
             AppendLog(warmup.Succeeded ? "system" : "error", warmup.Message);
-            await OnStatusChanged.InvokeAsync(warmup.Succeeded ? "Status: connected + SolidWorks ready" : "Status: connected (warm-up skipped/failed)");
+            await SetConnectionStatusAsync(
+                warmup.Succeeded ? "Status: connected + SolidWorks ready" : "Status: connected (warm-up skipped/failed)",
+                warmup.Succeeded ? "Ai Box, MCP, and SolidWorks are ready." : $"Ai Box and MCP are ready. {warmup.Message}",
+                true);
         }
         catch (Exception ex)
         {
             runtime?.Dispose();
             runtime = null;
+            skillCatalog = null;
+            hasPendingPlanApproval = false;
+            isPlanApproved = false;
+            awaitingStepApproval = false;
             AppendLog("error", ex.Message);
-            await OnStatusChanged.InvokeAsync("Status: connection failed");
+            await SetConnectionStatusAsync("Status: connection failed", ex.Message, false);
         }
         finally
         {
             currentOperationCts?.Dispose();
             currentOperationCts = null;
             isBusy = false;
+            isConnecting = false;
             await InvokeAsync(StateHasChanged);
         }
     }
@@ -349,6 +406,27 @@
         AppendLog("system", "Operation cancellation requested.");
     }
 
+    private void ToggleDemoPicker()
+    {
+        isDemoPickerOpen = !isDemoPickerOpen;
+    }
+
+    private void SelectDemo(string demoName)
+    {
+        if (string.IsNullOrWhiteSpace(demoName))
+        {
+            return;
+        }
+
+        selectedDemoName = demoName;
+        isDemoPickerOpen = false;
+    }
+
+    private string GetSelectedDemoLabel()
+        => string.IsNullOrWhiteSpace(selectedDemoName)
+            ? "Select demo"
+            : selectedDemoName;
+
     private async Task RunSelectedDemoAsync()
     {
         if (string.IsNullOrWhiteSpace(selectedDemoName))
@@ -362,6 +440,7 @@
             return;
         }
 
+        isDemoPickerOpen = false;
         prompt = selectedDemo.Prompt;
         await SendAsync();
     }
@@ -411,6 +490,7 @@
             currentOperationCts?.Dispose();
             currentOperationCts = null;
             isBusy = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -484,6 +564,7 @@
             currentOperationCts?.Dispose();
             currentOperationCts = null;
             isBusy = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -576,10 +657,30 @@
         AppendLog(role, message);
     }
 
+    private async Task SetConnectionStatusAsync(string status, string detail, bool connected)
+    {
+        connectionStatus = status;
+        connectionDetail = detail;
+        isConnected = connected;
+        await NotifyStatusChangedAsync(status);
+    }
+
     private void AppendLog(string role, string message)
     {
         logEntries.Add((role, FormatHumanReadableJson(message)));
         InvokeAsync(StateHasChanged);
+    }
+
+    private async Task NotifyStatusChangedAsync(string status)
+    {
+        try
+        {
+            await OnStatusChanged.InvokeAsync(status);
+        }
+        catch (Exception ex)
+        {
+            AppendLog("warning", $"Status callback failed: {ex.Message}");
+        }
     }
 
     private static Color GetColor(string role) => role switch
@@ -593,6 +694,54 @@
         "system" => Color.Success,
         _ => Color.Default,
     };
+
+    private Color GetConnectionStatusColor()
+    {
+        if (isConnecting)
+        {
+            return Color.Info;
+        }
+
+        if (isConnected)
+        {
+            return connectionStatus.Contains("warm-up skipped/failed", StringComparison.OrdinalIgnoreCase)
+                ? Color.Warning
+                : Color.Success;
+        }
+
+        return connectionStatus.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            ? Color.Error
+            : Color.Default;
+    }
+
+    private string GetConnectionBadgeLabel()
+    {
+        if (isConnecting)
+        {
+            return "Connecting";
+        }
+
+        if (isConnected)
+        {
+            return connectionStatus.Contains("warm-up skipped/failed", StringComparison.OrdinalIgnoreCase)
+                ? "Connected with warnings"
+                : "Ready";
+        }
+
+        return connectionStatus.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            ? "Failed"
+            : "Offline";
+    }
+
+    private string GetConnectButtonLabel()
+    {
+        if (isConnecting)
+        {
+            return "Connecting...";
+        }
+
+        return isConnected ? "Reconnect" : "Connect";
+    }
 
     private static string FormatToolList(IReadOnlyList<string> toolNames)
     {

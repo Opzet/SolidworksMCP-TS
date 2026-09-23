@@ -1,0 +1,364 @@
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using AutoWorks.Runtime
+
+@if (Runtime is null)
+{
+    <MudPaper Class="pa-3" Outlined="true">
+        <MudText Typo="Typo.subtitle1">Tools and capabilities</MudText>
+        <MudText Typo="Typo.body2" Class="mt-2">Connect to MCP from the Chat tab to load the live tool catalog.</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudStack Spacing="2">
+        <MudPaper Class="pa-3" Outlined="true">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.subtitle1">Tools and capabilities</MudText>
+                    <MudText Typo="Typo.body2">@_statusText</MudText>
+                </MudStack>
+                <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                    <MudButton Variant="Variant.Outlined" OnClick="RefreshAsync" Disabled="@_isRefreshing">Refresh</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunSelectedValidationAsync" Disabled="@(!CanValidateSelectedTool)">Run validation</MudButton>
+                </MudStack>
+            </MudStack>
+            @if (_isRefreshing)
+            {
+                <MudProgressLinear Class="mt-2" Color="Color.Info" Indeterminate="true" />
+            }
+        </MudPaper>
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="5">
+                <MudPaper Class="pa-3" Outlined="true" Style="max-height: calc(100dvh - 260px); overflow:auto;">
+                    <MudText Typo="Typo.subtitle2">Capability tree</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Available tools are marked in green. Missing upstream features are marked in red.</MudText>
+
+                    <MudTreeView T="string"
+                                 Class="mt-2"
+                                 Dense="true"
+                                 Hover="true"
+                                 SelectionMode="SelectionMode.SingleSelection"
+                                 @bind-SelectedValue="_selectedToolName">
+                        @foreach (var group in _groups)
+                        {
+                            <MudTreeViewItem T="string" Text="@group.Title" Value="@group.Title" Expanded="true">
+                                @foreach (var tool in group.Tools)
+                                {
+                                    <MudTreeViewItem T="string"
+                                                     Text="@tool.Label"
+                                                     Value="@tool.Name"
+                                                     Expanded="false"
+                                                     Icon="@(tool.IsAvailable ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Cancel)" />
+                                }
+                            </MudTreeViewItem>
+                        }
+                    </MudTreeView>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="7">
+                <MudPaper Class="pa-3" Outlined="true" Style="max-height: calc(100dvh - 260px); overflow:auto;">
+                    @if (SelectedTool is null)
+                    {
+                        <MudText Typo="Typo.body2">Select a tool from the tree to inspect its schema and smoke-test it.</MudText>
+                    }
+                    else
+                    {
+                        <MudStack Spacing="2">
+                            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.subtitle2">@SelectedTool.Label</MudText>
+                                    <MudText Typo="Typo.body2">@SelectedTool.Description</MudText>
+                                </MudStack>
+                                <MudChip T="string" Color="@GetToolStatusColor(SelectedTool.IsAvailable)" Variant="Variant.Filled">@SelectedTool.StatusLabel</MudChip>
+                            </MudStack>
+
+                            <MudPaper Class="pa-3" Outlined="true">
+                                <MudText Typo="Typo.caption">Selected tool</MudText>
+                                <MudText Typo="Typo.body1">@SelectedTool.Name</MudText>
+                            </MudPaper>
+
+                            <MudPaper Class="pa-3" Outlined="true">
+                                <MudText Typo="Typo.subtitle2">Input schema</MudText>
+                                @if (SelectedTool.InputSchemaJson is null)
+                                {
+                                    <MudText Typo="Typo.body2" Class="mt-2">No schema was returned by the MCP server.</MudText>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@SelectedTool.InputSchemaJson</MudText>
+                                }
+                            </MudPaper>
+
+                            <MudPaper Class="pa-3" Outlined="true">
+                                <MudText Typo="Typo.subtitle2">Validation</MudText>
+                                <MudText Typo="Typo.body2" Class="mt-2">@SelectedTool.ValidationNote</MudText>
+                                <MudStack Row="true" Spacing="1" Class="mt-2">
+                                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunSelectedValidationAsync" Disabled="@(!CanValidateSelectedTool)">Run smoke test</MudButton>
+                                    <MudButton Variant="Variant.Outlined" OnClick="SelectFirstSafeTool" Disabled="@(!_safeToolNames.Any())">Select safe tool</MudButton>
+                                </MudStack>
+                            </MudPaper>
+
+                            @if (!string.IsNullOrWhiteSpace(_validationResult))
+                            {
+                                <MudPaper Class="pa-3" Outlined="true">
+                                    <MudText Typo="Typo.subtitle2">Latest result</MudText>
+                                    <MudText Typo="Typo.body2" Class="mt-2">@_validationResult</MudText>
+                                </MudPaper>
+                            }
+                        </MudStack>
+                    }
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </MudStack>
+}
+
+@code {
+    [Parameter] public ChatRuntime? Runtime { get; set; }
+    [Parameter] public SkillCatalogSnapshot? SkillCatalog { get; set; }
+
+    private static readonly CapabilityGroupDefinition[] CapabilityGroups =
+    [
+        new("Session and documents", "Current session, documents, save/export, and setup tools.", ["open_model", "get_active_document_info", "create_part", "create_assembly", "list_part_templates", "launch_solidworks_and_check_connection", "close_model", "save_document", "save_active_document"]),
+        new("Reference geometry", "Reference planes and axes.", ["list_reference_planes", "create_plane", "create_axis"]),
+        new("Sketching", "Sketch creation, editing, relations, dimensions, and stable sketch handles.", ["create_sketch", "edit_sketch", "close_sketch", "list_sketches", "list_sketch_segments", "get_sketch_status", "add_line", "draw_line", "add_circle", "draw_circle", "add_rectangle", "draw_rectangle", "draw_centerline", "draw_point", "draw_arc", "draw_3point_arc", "draw_ellipse", "draw_polygon", "draw_slot", "draw_spline", "sketch_fillet", "sketch_chamfer", "sketch_trim", "sketch_offset", "sketch_mirror", "convert_entities", "set_construction_geometry", "add_relation", "add_dimension", "set_dimension", "list_dimensions" ]),
+        new("Solid features", "Extrusions and the upstream feature set that still needs to be migrated.", ["create_extrusion", "boss_extrude", "cut_extrude", "revolve", "fillet", "chamfer", "shell", "draft", "rib", "simple_hole", "sweep", "loft", "linear_pattern", "circular_pattern", "mirror_feature", "delete_feature", "rename_feature", "set_feature_suppression"]),
+        new("Inspection", "Topology listings, measurements, mass properties, screenshots, and diagnostics.", ["list_bodies", "list_faces", "list_edges", "list_vertices", "list_features", "get_bounding_box", "measure", "get_mass_properties", "check_errors", "set_view", "check_interference", "measure_distance", "analyze_draft", "check_geometry", "capture_screenshot"]),
+        new("Assemblies", "Component insertion and mates.", ["list_components", "insert_component", "add_mate", "list_mates", "set_component_fixed"]),
+        new("Engineering drawings", "Sheets, views, model items, dimensions, center marks, and notes.", ["create_drawing", "create_drawing_from_model", "list_sheets", "add_sheet", "activate_sheet", "add_drawing_view", "insert_model_view", "insert_projected_view", "insert_section_view", "insert_detail_view", "list_drawing_views", "activate_drawing_view", "set_drawing_view", "create_drawing_sketch", "insert_model_annotations", "auto_dimension_view", "insert_center_marks", "insert_centerlines", "add_note"]),
+        new("Automation helpers", "Export, templates, VBA, macro, and image tracing helpers.", ["export_file", "batch_export", "export_with_options", "capture_screenshot", "extract_drawing_template", "apply_drawing_template", "save_drawing_template", "generate_vba_script", "create_feature_vba", "create_batch_vba", "record_native_macro", "playback_native_macro", "trace_image_to_sketch", "trace_image_to_feature", "trace_image_to_drawing"])
+    ];
+
+    private ChatRuntime? _loadedRuntime;
+    private IReadOnlyList<McpToolDescriptor> _toolCatalog = [];
+    private IReadOnlyDictionary<string, McpToolDescriptor> _toolCatalogByName = new Dictionary<string, McpToolDescriptor>(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<CapabilityGroupViewModel> _groups = [];
+    private IReadOnlyList<string> _safeToolNames = [];
+    private string? _selectedToolName;
+    private string _statusText = "Connect to MCP to load the live tool catalog.";
+    private string? _validationResult;
+    private bool _isRefreshing;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Runtime is null)
+        {
+            _loadedRuntime = null;
+            _toolCatalog = [];
+            _toolCatalogByName = new Dictionary<string, McpToolDescriptor>(StringComparer.OrdinalIgnoreCase);
+            _groups = [];
+            _safeToolNames = [];
+            _selectedToolName = null;
+            _statusText = "Connect to MCP to load the live tool catalog.";
+            _validationResult = null;
+            return;
+        }
+
+        if (!ReferenceEquals(_loadedRuntime, Runtime))
+        {
+            await RefreshAsync();
+        }
+    }
+
+    private ToolViewModel? SelectedTool
+        => _selectedToolName is null
+            ? null
+            : _groups.SelectMany(group => group.Tools).FirstOrDefault(tool => string.Equals(tool.Name, _selectedToolName, StringComparison.OrdinalIgnoreCase));
+
+    private bool CanValidateSelectedTool
+        => !_isRefreshing
+           && SelectedTool is not null
+           && SelectedTool.IsAvailable
+           && _safeToolNames.Contains(SelectedTool.Name, StringComparer.OrdinalIgnoreCase);
+
+    private async Task RefreshAsync()
+    {
+        if (Runtime is null)
+        {
+            return;
+        }
+
+        _isRefreshing = true;
+        _validationResult = null;
+
+        try
+        {
+            _loadedRuntime = Runtime;
+            _toolCatalog = await Runtime.GetToolCatalogAsync();
+            _toolCatalogByName = _toolCatalog.ToDictionary(tool => tool.Name, StringComparer.OrdinalIgnoreCase);
+            _groups = BuildGroups();
+            _safeToolNames = BuildSafeToolNames();
+            _selectedToolName = _selectedToolName is not null && _toolCatalogByName.ContainsKey(_selectedToolName)
+                ? _selectedToolName
+                : _toolCatalog.FirstOrDefault(tool => _safeToolNames.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))?.Name
+                    ?? _toolCatalog.FirstOrDefault()?.Name;
+            _statusText = $"Loaded {_toolCatalog.Count} tools from MCP. {GetCoverageSummary()}";
+        }
+        catch (Exception ex)
+        {
+            _statusText = $"Failed to load tool catalog: {ex.Message}";
+            _toolCatalog = [];
+            _toolCatalogByName = new Dictionary<string, McpToolDescriptor>(StringComparer.OrdinalIgnoreCase);
+            _groups = [];
+            _safeToolNames = [];
+            _selectedToolName = null;
+        }
+        finally
+        {
+            _isRefreshing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private IReadOnlyList<CapabilityGroupViewModel> BuildGroups()
+    {
+        return CapabilityGroups.Select(group =>
+        {
+            var tools = new List<ToolViewModel>(group.ToolNames.Length);
+            var availableCount = 0;
+            foreach (var toolName in group.ToolNames)
+            {
+                var available = _toolCatalogByName.TryGetValue(toolName, out var descriptor);
+                if (available)
+                {
+                    availableCount++;
+                }
+
+                tools.Add(new ToolViewModel(
+                    toolName,
+                    descriptor?.Description ?? "Not currently exposed by the C# server.",
+                    available,
+                    available ? "available" : "missing",
+                    GetSchemaText(descriptor)));
+            }
+
+            var coverageLabel = availableCount == 0
+                ? "missing"
+                : availableCount == group.ToolNames.Length
+                    ? "covered"
+                    : "partial";
+
+            return new CapabilityGroupViewModel(group.Title, group.Description, coverageLabel, tools);
+        }).ToArray();
+    }
+
+    private IReadOnlyList<string> BuildSafeToolNames()
+        => [
+            "get_active_document_info",
+            "list_part_templates",
+            "list_reference_planes",
+            "list_sketches",
+            "list_sketch_segments",
+            "get_sketch_status",
+            "list_bodies",
+            "list_faces",
+            "list_edges",
+            "list_vertices",
+            "list_features",
+            "get_bounding_box",
+            "get_mass_properties",
+            "check_errors",
+            "list_components",
+            "list_mates",
+            "list_sheets",
+            "list_drawing_views",
+            "get_rebuild_status"
+        ];
+
+    private string GetCoverageSummary()
+    {
+        var covered = _groups.Count(group => string.Equals(group.CoverageLabel, "covered", StringComparison.OrdinalIgnoreCase));
+        var partial = _groups.Count(group => string.Equals(group.CoverageLabel, "partial", StringComparison.OrdinalIgnoreCase));
+        var missing = _groups.Count(group => string.Equals(group.CoverageLabel, "missing", StringComparison.OrdinalIgnoreCase));
+        return $"{covered} covered, {partial} partial, {missing} missing capability groups.";
+    }
+
+    private static string? GetSchemaText(McpToolDescriptor? descriptor)
+        => descriptor?.InputSchema?.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+
+    private async Task RunSelectedValidationAsync()
+    {
+        if (!CanValidateSelectedTool || SelectedTool is null || Runtime is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var arguments = BuildValidationArguments(SelectedTool.Name);
+            if (arguments is null)
+            {
+                _validationResult = $"No smoke-test arguments are defined for {SelectedTool.Name}.";
+                return;
+            }
+
+            var result = await Runtime.InvokeToolAsync(SelectedTool.Name, arguments);
+            _validationResult = string.Join("\n\n", new[]
+            {
+                result.DisplayText,
+                result.StderrSummary,
+                result.RawJson
+            }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        }
+        catch (Exception ex)
+        {
+            _validationResult = ex.Message;
+        }
+        finally
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static JsonObject? BuildValidationArguments(string toolName)
+        => toolName.ToLowerInvariant() switch
+        {
+            "get_active_document_info" => new JsonObject(),
+            "list_part_templates" => new JsonObject(),
+            "list_reference_planes" => new JsonObject(),
+            "list_sketches" => new JsonObject(),
+            "list_sketch_segments" => new JsonObject(),
+            "get_sketch_status" => new JsonObject(),
+            "list_bodies" => new JsonObject(),
+            "list_faces" => new JsonObject(),
+            "list_edges" => new JsonObject(),
+            "list_vertices" => new JsonObject(),
+            "list_features" => new JsonObject(),
+            "get_bounding_box" => new JsonObject(),
+            "get_mass_properties" => new JsonObject(),
+            "check_errors" => new JsonObject { ["rebuild_first"] = true },
+            "list_components" => new JsonObject(),
+            "list_mates" => new JsonObject(),
+            "list_sheets" => new JsonObject(),
+            "list_drawing_views" => new JsonObject(),
+            "get_rebuild_status" => new JsonObject(),
+            _ => null
+        };
+
+    private void SelectFirstSafeTool()
+    {
+        var toolName = _safeToolNames.FirstOrDefault(name => _toolCatalogByName.ContainsKey(name));
+        if (!string.IsNullOrWhiteSpace(toolName))
+        {
+            _selectedToolName = toolName;
+        }
+    }
+
+    private static Color GetToolStatusColor(bool isAvailable)
+        => isAvailable ? Color.Success : Color.Error;
+
+    private sealed record CapabilityGroupDefinition(string Title, string Description, string[] ToolNames);
+
+    private sealed record CapabilityGroupViewModel(string Title, string Description, string CoverageLabel, IReadOnlyList<ToolViewModel> Tools);
+
+    private sealed record ToolViewModel(string Name, string Description, bool IsAvailable, string StatusLabel, string? InputSchemaJson)
+    {
+        public string Label => $"{Name} ({StatusLabel})";
+        public string ValidationNote => IsAvailable
+            ? "This tool is exposed by the current C# server and can be smoke-tested from here if a safe argument preset exists."
+            : "This tool is listed in the upstream capability map but is not yet exposed by the current C# server.";
+    }
+}

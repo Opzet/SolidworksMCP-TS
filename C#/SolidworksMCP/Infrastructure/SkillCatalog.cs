@@ -27,6 +27,8 @@ internal static class SkillCatalog
         new("modeling", "Modeling", "toolset", "Model, assembly, saving, rebuild, dimension, and document workflows.", ["modeling"], "enabled"),
         new("native-macro", "Native Macro", "toolset", "Native macro recording and playback workflows.", ["native-macro"], "enabled"),
         new("sketch", "Sketch", "toolset", "Sketch creation, editing, entities, constraints, and status inspection.", ["sketch"], "enabled"),
+        new("picture-to-sketch", "Picture to Sketch", "toolset", "SOLIDWORKS AutoTrace/Picture to Sketch is interactive PropertyManager UI without a supported public API entry point, so this server uses deterministic segmentation and line-art pipelines exposed as tools.", ["picture-to-sketch", "deterministic-segmentation", "line-art-tracing"], "enabled"),
+        new("deep-vectorization", "Deep Vectorization", "toolset", "Exposes deep-vectorization-compatible backends/modes with deterministic CPU fallback, reverse-raster quality gates, and capability reporting for backend readiness.", ["deep-vectorization", "reverse-raster-quality", "vectorization-capabilities"], "enabled"),
         new("template-manager", "Template Manager", "toolset", "Drawing template extraction, application, and storage workflows.", ["template-manager"], "enabled"),
         new("vba", "VBA", "toolset", "VBA generation and macro authoring workflows.", ["vba"], "enabled"),
         new("design-table", "Design Table", "resource", "Design table resource management, SQL-backed updates, and generated configurations.", ["design-table", "sql-integration", "auto-update"], "enabled"),

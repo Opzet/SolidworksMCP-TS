@@ -33,23 +33,23 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
         // Show splash screen immediately
-        FrmSplashScreen splash = new FrmSplashScreen( );
-        
-        splash.Show( );
+        using FrmSplashScreen splash = new FrmSplashScreen();
+
+        splash.Show();
         splash.UpdateStatus($"Initializing application for {Environment.MachineName}\\{Environment.UserName}...");
-        
-        Application.DoEvents( );
+
+        Application.DoEvents();
         Thread.Sleep(500);
         splash.UpdateStatus("Initializing hosting environment...");
-        
-        Application.DoEvents( );
+
+        Application.DoEvents();
         Thread.Sleep(500);
-        var versionInfo = GetAppVersion( );//
+        var versionInfo = GetAppVersion();//
 
 
         if (versionInfo != null)
         {
-            splash.UpdateStatus($"Version: {versionInfo.ToString( )}");
+            splash.UpdateStatus($"Version: {versionInfo}");
         }
         else
         {
@@ -59,7 +59,14 @@ internal static class Program
         Thread.Sleep(500);
         splash.UpdateStatus("Loading main window...");
 
-        Application.Run(new MainForm());
+        using MainForm mainForm = new MainForm();
+
+        if (!splash.IsDisposed)
+        {
+            splash.Close();
+        }
+
+        Application.Run(mainForm);
     }
 
     private static Version GetAppVersion()

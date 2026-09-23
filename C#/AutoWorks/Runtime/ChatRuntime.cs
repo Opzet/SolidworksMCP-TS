@@ -4,7 +4,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-internal sealed class ChatRuntime : IDisposable
+public sealed class ChatRuntime : IDisposable
 {
     private const int MaxRounds = 8;
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
@@ -48,6 +48,12 @@ internal sealed class ChatRuntime : IDisposable
         return JsonSerializer.Deserialize<SkillCatalogSnapshot>(payload.ToJsonString(), WebJsonOptions)
             ?? throw new InvalidOperationException("Failed to parse MCP skills catalog payload.");
     }
+
+    public async Task<IReadOnlyList<McpToolDescriptor>> GetToolCatalogAsync(CancellationToken cancellationToken = default)
+        => await mcp.ListToolCatalogAsync(cancellationToken).ConfigureAwait(false);
+
+    public Task<McpToolCallResult> InvokeToolAsync(string toolName, JsonObject? arguments = null, CancellationToken cancellationToken = default)
+        => mcp.CallToolAsync(toolName, arguments ?? new JsonObject(), cancellationToken);
 
     public async Task<SolidWorksWarmupStatus> WarmupSolidWorksAsync(CancellationToken cancellationToken = default)
     {

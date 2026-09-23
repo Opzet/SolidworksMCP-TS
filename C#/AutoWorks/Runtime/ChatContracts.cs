@@ -2,9 +2,9 @@ namespace AutoWorks.Runtime;
 
 using System.Text.Json.Nodes;
 
-internal sealed record ChatSettings(string OllamaBaseUrl, string Model, string McpCommand, string[] McpArgs);
+public sealed record ChatSettings(string OllamaBaseUrl, string Model, string McpCommand, string[] McpArgs);
 
-internal sealed record ToolExecution(
+public sealed record ToolExecution(
     int StepNumber,
     int TotalSteps,
     string Name,
@@ -17,21 +17,21 @@ internal sealed record ToolExecution(
     string? FeedbackImagePath = null,
     string? FeedbackMediaType = null);
 
-internal sealed record PlannedToolCall(string Name, string Arguments, string Source = "tool-call");
+public sealed record PlannedToolCall(string Name, string Arguments, string Source = "tool-call");
 
-internal sealed record ChatPlanProposal(
+public sealed record ChatPlanProposal(
     string PlanSummary,
     IReadOnlyList<PlannedToolCall> PlannedToolCalls,
     bool RequiresApproval,
     string ParseSource = "tool-call",
     IReadOnlyList<string>? Diagnostics = null);
 
-internal sealed record ChatFailureDiagnostic(
+public sealed record ChatFailureDiagnostic(
     int FailedToolCount,
     IReadOnlyList<string> FailureSummaries,
     IReadOnlyList<string> DiagnosticDetails);
 
-internal sealed record ChatTurnResult(
+public sealed record ChatTurnResult(
     string FinalResponse,
     IReadOnlyList<ToolExecution> ToolCalls,
     IReadOnlyList<string> ProgressUpdates,
@@ -43,19 +43,19 @@ internal sealed record ChatTurnResult(
     bool AwaitingHumanApproval = false,
     string? HumanApprovalPrompt = null);
 
-internal sealed record OllamaChatRequest(string Model, IReadOnlyList<OllamaMessage> Messages, JsonArray? Tools, bool Stream);
+public sealed record OllamaChatRequest(string Model, IReadOnlyList<OllamaMessage> Messages, JsonArray? Tools, bool Stream);
 
-internal sealed record OllamaChatResponse(OllamaMessage Message);
+public sealed record OllamaChatResponse(OllamaMessage Message);
 
-internal sealed record OllamaConnectionStatus(
+public sealed record OllamaConnectionStatus(
     bool IsReachable,
     bool IsModelAvailable,
     int AvailableModelCount,
     IReadOnlyList<string> AvailableModels);
 
-internal sealed record McpConnectionStatus(int ToolCount, IReadOnlyList<string> ToolNames);
+public sealed record McpConnectionStatus(int ToolCount, IReadOnlyList<string> ToolNames);
 
-internal sealed record McpToolCallResult(
+public sealed record McpToolCallResult(
     string DisplayText,
     string RawJson,
     string? StderrSummary = null,
@@ -63,15 +63,17 @@ internal sealed record McpToolCallResult(
     string? FeedbackImagePath = null,
     string? FeedbackMediaType = null);
 
-internal sealed record SolidWorksWarmupStatus(bool Attempted, bool Succeeded, string Message);
+public sealed record McpToolDescriptor(string Name, string Description, JsonNode? InputSchema);
 
-internal sealed record OllamaMessage(
+public sealed record SolidWorksWarmupStatus(bool Attempted, bool Succeeded, string Message);
+
+public sealed record OllamaMessage(
     string Role,
     string? Content,
     string? ToolName = null,
     List<string>? Images = null,
     List<OllamaToolCall>? ToolCalls = null);
 
-internal sealed record OllamaToolCall(OllamaFunctionCall Function);
+public sealed record OllamaToolCall(OllamaFunctionCall Function);
 
-internal sealed record OllamaFunctionCall(string Name, JsonNode? Arguments);
+public sealed record OllamaFunctionCall(string Name, JsonNode? Arguments);

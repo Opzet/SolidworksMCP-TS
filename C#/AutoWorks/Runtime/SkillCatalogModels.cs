@@ -1,6 +1,6 @@
 namespace AutoWorks.Runtime;
 
-internal sealed record SkillCatalogEntry(
+public sealed record SkillCatalogEntry(
     string Name,
     string Label,
     string Category,
@@ -8,7 +8,7 @@ internal sealed record SkillCatalogEntry(
     IReadOnlyList<string> Capabilities,
     string Status);
 
-internal sealed record SkillCatalogSnapshot(
+public sealed record SkillCatalogSnapshot(
     int ToolCount,
     int ResourceCount,
     IReadOnlyList<string> Capabilities,

@@ -94,6 +94,33 @@ internal sealed class McpClient : IDisposable
         return names;
     }
 
+    public async Task<IReadOnlyList<McpToolDescriptor>> ListToolCatalogAsync(CancellationToken cancellationToken = default)
+    {
+        var tools = await ListToolsAsync(cancellationToken).ConfigureAwait(false);
+        var catalog = new List<McpToolDescriptor>(tools.Count);
+
+        foreach (var node in tools)
+        {
+            if (node is not JsonObject tool)
+            {
+                continue;
+            }
+
+            var name = tool["name"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            catalog.Add(new McpToolDescriptor(
+                name,
+                tool["description"]?.GetValue<string>() ?? string.Empty,
+                tool["inputSchema"]?.DeepClone()));
+        }
+
+        return catalog;
+    }
+
     public async Task<JsonArray> ListToolsAsOllamaToolsAsync(CancellationToken cancellationToken = default)
     {
         var tools = await ListToolsAsync(cancellationToken).ConfigureAwait(false);
