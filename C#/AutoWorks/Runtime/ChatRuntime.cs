@@ -8,14 +8,13 @@ public sealed class ChatRuntime : IDisposable
 {
     private const int MaxRounds = 8;
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
-    private const string SystemPrompt = "You are a SolidWorks CAD assistant for SolidWorks 2026 and newer only. Use MCP tools whenever CAD actions are required. Be deterministic. Do not plan for or mention compatibility with older SolidWorks versions, and do not suggest fallback workflows for prior releases. Before geometry edits, check document context with get_active_document_info and use list_reference_planes, list_sketches, list_sketch_segments, list_components, and list_dimensions when selection or stable handles are needed. Prefer declarative selection objects over implicit UI selection. For part creation workflows, first enumerate templates with list_part_templates (if available), then create_part or create_assembly as appropriate, then continue with create_sketch, add_line/add_circle/add_rectangle, add_relation, add_dimension, exit_sketch, create_extrusion, set_dimension, insert_component, add_mate, and drawing tools as needed. Plans must explicitly include save/status/rebuild verification by using get_active_document_info before major actions, get_sketch_status while constraining sketches, get_rebuild_status or rebuild_model after geometry or mate changes, save_document when an unsaved document first needs a durable file path, save_active_document only for later in-place saves, and capture_screenshot after meaningful CAD changes when visual feedback would help the model inspect the result. Never invent placeholder paths such as C:/path/to/save/... . Use a real output path only when one is known or has been requested; otherwise ask for a save location or skip save/export steps and explain why. When using sketch selection, prefer the stable handles returned by list_sketch_segments and list_sketches instead of made-up names. If a required capability is unavailable, clearly state the limitation and continue with available SolidWorks 2026+ tools.";
+    private static readonly string BaseSystemPrompt = """
+You are a SolidWorks CAD assistant for SolidWorks 2026 and newer only. Use MCP tools whenever CAD actions are required. Be deterministic. Do not plan for or mention compatibility with older SolidWorks versions, and do not suggest fallback workflows for prior releases. Before geometry edits, check document context with get_active_document_info and use list_reference_planes, list_sketches, list_sketch_segments, list_components, and list_dimensions when selection or stable handles are needed. Prefer declarative selection objects over implicit UI selection. For part creation workflows, first enumerate templates with list_part_templates (if available), then create_part or create_assembly as appropriate, then continue with create_sketch, add_line/add_circle/add_rectangle, add_relation, add_dimension, exit_sketch, create_extrusion, set_dimension, insert_component, add_mate, and drawing tools as needed. Plans must explicitly include save/status/rebuild verification by using get_active_document_info before major actions, get_sketch_status while constraining sketches, get_rebuild_status or rebuild_model after geometry or mate changes, save_document when an unsaved document first needs a durable file path, save_active_document only for later in-place saves, and capture_screenshot after meaningful CAD changes when visual feedback would help the model inspect the result. Never invent placeholder paths such as C:/path/to/save/... or <path-to-part-template>. For insert_component, open_model, export, and save workflows, use exact paths that already exist on disk or were returned by a tool such as list_part_templates; do not fabricate Windows paths. If a required path is unknown, ask for it or list available templates/files first. Use a real output path only when one is known or has been requested; otherwise ask for a save location or skip save/export steps and explain why. When using sketch relations or dimensions, always refresh the current sketch handle list with list_sketch_segments for the active sketch and use only handles returned for that same sketch; never reuse segment handles from a different sketch and never fabricate names like L1@Sketch1. If a relation fails because a handle is missing, re-list the active sketch segments and choose a valid handle before retrying. If a required capability is unavailable, clearly state the limitation and continue with available SolidWorks 2026+ tools.
+""";
 
-    private readonly ChatSettings settings;
+    private ChatSettings settings;
     private readonly McpClient mcp;
-    private readonly List<OllamaMessage> conversation =
-    [
-        new("system", SystemPrompt)
-    ];
+    private readonly List<OllamaMessage> conversation = [];
 
     private List<OllamaToolCall>? pendingToolCalls;
 
@@ -23,6 +22,36 @@ public sealed class ChatRuntime : IDisposable
     {
         this.settings = settings;
         mcp = new McpClient(settings.McpCommand, settings.McpArgs);
+        conversation.Add(new OllamaMessage("system", BuildSystemPrompt(this.settings)));
+    }
+
+    private static string BuildSystemPrompt(ChatSettings settings)
+    {
+        var prompt = BaseSystemPrompt;
+        var resourcePaths = settings.ResourcePaths ?? [];
+        if (resourcePaths.Count == 0)
+        {
+            return prompt;
+        }
+
+        return $"""
+{prompt}
+
+Known resource paths loaded from settings:
+{string.Join(Environment.NewLine, resourcePaths.Select(resource => $"- {resource.Kind}: {resource.Path} ({resource.Name})"))}
+""";
+    }
+
+    public void UpdateResourcePaths(IReadOnlyList<ResourcePathEntry> resourcePaths)
+    {
+        settings = settings with { ResourcePaths = resourcePaths.ToArray() };
+        if (conversation.Count == 0)
+        {
+            conversation.Add(new OllamaMessage("system", BuildSystemPrompt(settings)));
+            return;
+        }
+
+        conversation[0] = new OllamaMessage("system", BuildSystemPrompt(settings));
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -151,7 +180,7 @@ public sealed class ChatRuntime : IDisposable
     {
         pendingToolCalls = null;
         conversation.Clear();
-        conversation.Add(new OllamaMessage("system", SystemPrompt));
+        conversation.Add(new OllamaMessage("system", BuildSystemPrompt(settings)));
     }
 
     public async Task<ChatTurnResult> ExecuteApprovedPlanAsync(bool humanInLoop = true, CancellationToken cancellationToken = default)
@@ -225,47 +254,27 @@ public sealed class ChatRuntime : IDisposable
                     }
 
                     progressUpdates.Add("Stopping execution after the first failed tool call.");
-                    pendingToolCalls = currentCalls[callIndex..];
-
-                    var failureDiagnostic = BuildFailureDiagnostic(toolCalls);
-                    var failedMessage = failureSummary ?? $"{call.Function.Name} failed.";
-                    var approvalPrompt = humanInLoop
-                        ? $"{failedMessage} Do you want to retry this step as-is, or revise the prompt and scope? Reply yes to retry the paused step, or describe the revision needed."
-                        : null;
-
+                    pendingToolCalls = null;
                     return new ChatTurnResult(
-                        failedMessage,
+                        failureSummary ?? $"Tool {call.Function.Name} failed.",
                         toolCalls,
                         progressUpdates,
-                        failedMessage,
-                        failureDiagnostic,
-                        feedbackImagePath,
-                        feedbackMediaType,
-                        true,
-                        humanInLoop,
-                        approvalPrompt);
-                }
-
-                completedSteps++;
-
-                if (humanInLoop && completedSteps < totalSteps)
-                {
-                    var remainingCalls = currentCalls[(callIndex + 1)..].ToList();
-                    pendingToolCalls = remainingCalls;
-                    var prompt = $"Step {stepNumber}/{totalSteps} completed: {call.Function.Name}. Is this correct, or does this step require revision? Reply yes to continue, or describe the revision needed.";
-                    progressUpdates.Add("Pausing for human review before the next step.");
-                    return new ChatTurnResult(
-                        prompt,
-                        toolCalls,
-                        progressUpdates,
-                        prompt,
+                        failureSummary ?? $"Tool {call.Function.Name} failed.",
                         BuildFailureDiagnostic(toolCalls),
                         feedbackImagePath,
                         feedbackMediaType,
-                        false,
                         true,
-                        prompt);
+                        false,
+                        null);
                 }
+
+                completedSteps++;
+                progressUpdates.Add($"Tool {stepNumber}/{totalSteps} completed successfully.");
+            }
+
+            if (!humanInLoop)
+            {
+                currentCalls = [];
             }
 
             var tools = await mcp.ListToolsAsOllamaToolsAsync(cancellationToken).ConfigureAwait(false);

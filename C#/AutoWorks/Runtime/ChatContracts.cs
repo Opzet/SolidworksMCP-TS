@@ -2,7 +2,12 @@ namespace AutoWorks.Runtime;
 
 using System.Text.Json.Nodes;
 
-public sealed record ChatSettings(string OllamaBaseUrl, string Model, string McpCommand, string[] McpArgs);
+public sealed record ChatSettings(
+    string OllamaBaseUrl,
+    string Model,
+    string McpCommand,
+    string[] McpArgs,
+    IReadOnlyList<ResourcePathEntry>? ResourcePaths = null);
 
 public sealed record ToolExecution(
     int StepNumber,

@@ -1,0 +1,45 @@
+{
+  "version": "1.0.0",
+  "timestamp": "2026-09-23T08:19:46.3276184+00:00",
+  "resources": [
+    {
+      "kind": "part-template",
+      "name": "CAMCO PART",
+      "path": "T:\\Camco Drawings\\Solidworks\\Templates\\CAMCO Drawing Templates\\CAMCO PART.prtdot",
+      "source": "list_part_templates",
+      "status": "available"
+    },
+    {
+      "kind": "part-template",
+      "name": "CAMCO WELDMENT PART",
+      "path": "T:\\Camco Drawings\\Solidworks\\Templates\\CAMCO Drawing Templates\\CAMCO WELDMENT PART.prtdot",
+      "source": "list_part_templates",
+      "status": "available"
+    },
+    {
+      "kind": "assembly-template",
+      "name": "CAMCO ASSEMBLY",
+      "path": "T:\\Camco Drawings\\Solidworks\\Templates\\CAMCO Drawing Templates\\CAMCO ASSEMBLY.asmdot",
+      "source": "list_part_templates",
+      "status": "available"
+    },
+    {
+      "kind": "drawing-template",
+      "name": "Camco A1_QUA_TOO_7_1-4_SHTS ",
+      "path": "T:\\Camco Drawings\\Solidworks\\Templates\\CAMCO Drawing Templates\\DRAWING BORDER FOLDER\\Camco A1_QUA_TOO_7_1-4_SHTS .drwdot",
+      "source": "list_part_templates",
+      "status": "available"
+    }
+  ],
+  "metadata": {
+    "totalResources": 4,
+    "byType": {
+      "part-template": 2,
+      "assembly-template": 1,
+      "drawing-template": 1
+    },
+    "byStatus": {
+      "available": 4
+    }
+  }
+}

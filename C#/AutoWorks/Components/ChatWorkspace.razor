@@ -2,6 +2,7 @@
 @using System.Text
 @using System.Text.Encodings.Web
 @using System.Text.Json
+@using System.Text.Json.Nodes
 @using Microsoft.AspNetCore.Components.Web
 @using AutoWorks.Runtime
 
@@ -41,15 +42,18 @@
                           OnKeyDown="HandlePromptKeyDown" />
 
             <MudGrid Spacing="1">
-                <MudItem xs="6" sm="3">
+                <MudItem xs="12" sm="4">
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" OnClick="SendAsync" Disabled="!CanUseConnectedFeatures || isBusy || string.IsNullOrWhiteSpace(prompt)">Send</MudButton>
                 </MudItem>
-                <MudItem xs="6" sm="3">
+                <MudItem xs="12" sm="4">
                     <MudButton Variant="Variant.Outlined" Color="Color.Default" FullWidth="true" OnClick="StopCurrentOperation" Disabled="!isBusy">Stop</MudButton>
                 </MudItem>
-                <MudItem xs="6" sm="3" md="2">
+                <MudItem xs="12" sm="4">
                     <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" OnClick="ConnectAsync" Disabled="isBusy">@GetConnectButtonLabel()</MudButton>
                 </MudItem>
+            </MudGrid>
+
+            <MudGrid Spacing="1">
                 <MudItem xs="6" sm="3" md="2">
                     <MudButton Variant="Variant.Filled" Color="Color.Warning" FullWidth="true" OnClick="ApprovePlan" Disabled="!CanUseConnectedFeatures || !hasPendingPlanApproval || isPlanApproved || isBusy">Approve</MudButton>
                 </MudItem>
@@ -204,6 +208,25 @@
             }
             <MudCheckBox @bind-Value="attachImage" Label="Attach image to prompt" Class="mt-2" Disabled="isBusy || string.IsNullOrWhiteSpace(selectedImagePath)" />
             <MudButton Variant="Variant.Outlined" Class="mt-2" OnClick="SendImageDecodePromptAsync" Disabled="!CanUseConnectedFeatures || string.IsNullOrWhiteSpace(selectedImagePath) || isBusy">Decode + Plan CAD Steps</MudButton>
+
+            <MudDivider Class="my-3" />
+            <MudText Typo="Typo.subtitle2">Resource paths (@resourcePaths.Count)</MudText>
+            <MudText Typo="Typo.body2">@resourcePathStatus</MudText>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Class="mt-2"
+                       FullWidth="true"
+                       OnClick="AcquireResourcePathsAsync"
+                       Disabled="!CanUseConnectedFeatures || isBusy || isAcquiringResourcePaths">Acquire Resource Paths</MudButton>
+            @if (resourcePaths.Count > 0)
+            {
+                <MudChipSet T="string" Class="mt-2">
+                    @foreach (var resource in resourcePaths)
+                    {
+                        <MudChip T="string" Variant="Variant.Outlined" Color="Color.Info">@resource.Path</MudChip>
+                    }
+                </MudChipSet>
+            }
         </MudPaper>
     </MudTabPanel>
 </MudTabs>
@@ -228,7 +251,10 @@
 
     private ChatRuntime? runtime;
     private SkillCatalogSnapshot? skillCatalog;
+    private IReadOnlyList<ResourcePathEntry> resourcePaths = [];
+    private string resourcePathStatus = "Connect to MCP to load or acquire resource paths.";
     private CancellationTokenSource? currentOperationCts;
+    private bool isAcquiringResourcePaths;
 
     private string prompt = string.Empty;
     private string ollamaUrl = "http://aibox:11434";
@@ -304,8 +330,14 @@
                 throw new FileNotFoundException($"MCP executable was not found: {mcpCommand}");
             }
 
+            var persistedResources = await ResourcePathStore.LoadAsync(cancellationToken);
+            resourcePaths = persistedResources.Resources;
+            resourcePathStatus = resourcePaths.Count == 0
+                ? "No persisted resource paths were loaded."
+                : $"Loaded {resourcePaths.Count} persisted resource path(s).";
+
             runtime?.Dispose();
-            runtime = new ChatRuntime(new ChatSettings(ollamaUrl.Trim(), model.Trim(), mcpCommand, SplitCommandLine(mcpArgs.Trim())));
+            runtime = new ChatRuntime(new ChatSettings(ollamaUrl.Trim(), model.Trim(), mcpCommand, SplitCommandLine(mcpArgs.Trim()), resourcePaths));
             await runtime.InitializeAsync(cancellationToken);
 
             var mcpStatus = await runtime.TestMcpConnectionAsync(cancellationToken);
@@ -327,9 +359,12 @@
 
             var warmup = await runtime.WarmupSolidWorksAsync(cancellationToken);
             AppendLog(warmup.Succeeded ? "system" : "error", warmup.Message);
+            await RefreshResourcePathsAsync(cancellationToken, persistToFile: true);
             await SetConnectionStatusAsync(
                 warmup.Succeeded ? "Status: connected + SolidWorks ready" : "Status: connected (warm-up skipped/failed)",
-                warmup.Succeeded ? "Ai Box, MCP, and SolidWorks are ready." : $"Ai Box and MCP are ready. {warmup.Message}",
+                warmup.Succeeded
+                    ? $"Ai Box, MCP, and SolidWorks are ready. {resourcePathStatus}"
+                    : $"Ai Box and MCP are ready. {warmup.Message} {resourcePathStatus}",
                 true);
         }
         catch (Exception ex)
@@ -349,6 +384,56 @@
             currentOperationCts = null;
             isBusy = false;
             isConnecting = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private Task AcquireResourcePathsAsync()
+        => RefreshResourcePathsAsync(currentOperationCts?.Token ?? CancellationToken.None, persistToFile: true);
+
+    private async Task<IReadOnlyList<ResourcePathEntry>> RefreshResourcePathsAsync(CancellationToken cancellationToken, bool persistToFile)
+    {
+        if (runtime is null)
+        {
+            resourcePathStatus = "Connect to MCP first to enumerate resource paths.";
+            return resourcePaths;
+        }
+
+        isAcquiringResourcePaths = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var result = await runtime.InvokeToolAsync("list_part_templates", new JsonObject(), cancellationToken);
+            var discoveredPaths = ExtractResourcePaths(result.StructuredData ?? TryParseJsonNode(result.DisplayText));
+            resourcePaths = discoveredPaths;
+            resourcePathStatus = discoveredPaths.Count == 0
+                ? "No resource paths were discovered."
+                : $"Loaded {discoveredPaths.Count} resource path(s).";
+
+            runtime.UpdateResourcePaths(discoveredPaths);
+
+            if (persistToFile)
+            {
+                await ResourcePathStore.SaveAsync(discoveredPaths, cancellationToken);
+                AppendLog("system", $"Persisted {discoveredPaths.Count} resource path(s) to {ResourcePathStore.StateFilePath}.");
+            }
+            else
+            {
+                AppendLog("system", $"Discovered {discoveredPaths.Count} resource path(s).");
+            }
+
+            return discoveredPaths;
+        }
+        catch (Exception ex)
+        {
+            resourcePathStatus = $"Failed to acquire resource paths: {ex.Message}";
+            AppendLog("warning", resourcePathStatus);
+            return resourcePaths;
+        }
+        finally
+        {
+            isAcquiringResourcePaths = false;
             await InvokeAsync(StateHasChanged);
         }
     }
@@ -852,6 +937,112 @@
 
         return appFolderPath;
     }
+
+    private static JsonNode? TryParseJsonNode(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var trimmed = text.Trim();
+        if (!trimmed.StartsWith('{') && !trimmed.StartsWith('['))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonNode.Parse(trimmed);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<ResourcePathEntry> ExtractResourcePaths(JsonNode? node)
+    {
+        List<ResourcePathEntry> resources = [];
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+
+        void Visit(JsonNode? current)
+        {
+            switch (current)
+            {
+                case JsonObject obj:
+                    foreach (var pair in obj)
+                    {
+                        if (pair.Value is JsonValue value && value.TryGetValue<string>(out var nestedValue))
+                        {
+                            TryAddResource(nestedValue, pair.Key);
+                        }
+
+                        Visit(pair.Value);
+                    }
+                    break;
+                case JsonArray arr:
+                    foreach (var item in arr)
+                    {
+                        Visit(item);
+                    }
+                    break;
+                case JsonValue value:
+                    if (value.TryGetValue<string>(out var scalarValue))
+                    {
+                        TryAddResource(scalarValue);
+                    }
+                    break;
+            }
+        }
+
+        void TryAddResource(string candidateText, string? key = null)
+        {
+            var path = NormalizeResourcePath(candidateText);
+            if (path is null || !seen.Add(path))
+            {
+                return;
+            }
+
+            resources.Add(new ResourcePathEntry(GetResourceKind(path, key), Path.GetFileNameWithoutExtension(path), path));
+        }
+
+        Visit(node);
+        return resources;
+    }
+
+    private static string? NormalizeResourcePath(string text)
+    {
+        var candidate = text.Trim();
+        if (candidate.Length == 0 || candidate.Contains('<') || candidate.Contains('>') || candidate.Contains("path-to", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (!Path.IsPathRooted(candidate))
+        {
+            return null;
+        }
+
+        var extension = Path.GetExtension(candidate);
+        if (!extension.Equals(".prtdot", StringComparison.OrdinalIgnoreCase)
+            && !extension.Equals(".asmdot", StringComparison.OrdinalIgnoreCase)
+            && !extension.Equals(".drwdot", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return Path.GetFullPath(candidate);
+    }
+
+    private static string GetResourceKind(string path, string? key)
+        => Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".prtdot" => "part-template",
+            ".asmdot" => "assembly-template",
+            ".drwdot" => "drawing-template",
+            _ => string.IsNullOrWhiteSpace(key) ? "resource" : key.ToLowerInvariant(),
+        };
 
     private static string FormatHumanReadableJson(string message)
     {
