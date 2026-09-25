@@ -1,3 +1,4 @@
+@using System.Text.Encodings.Web
 @using System.Text.Json
 @using System.Text.Json.Nodes
 @using AutoWorks.Runtime
@@ -20,7 +21,7 @@ else
                 </MudStack>
                 <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
                     <MudButton Variant="Variant.Outlined" OnClick="RefreshAsync" Disabled="@_isRefreshing">Refresh</MudButton>
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunSelectedValidationAsync" Disabled="@(!CanValidateSelectedTool)">Run validation</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunSelectedValidationAsync" Disabled="@(!CanRunSelectedTool)">Run validation</MudButton>
                 </MudStack>
             </MudStack>
             @if (_isRefreshing)
@@ -40,7 +41,8 @@ else
                                  Dense="true"
                                  Hover="true"
                                  SelectionMode="SelectionMode.SingleSelection"
-                                 @bind-SelectedValue="_selectedToolName">
+                                 SelectedValue="@_selectedToolName"
+                                 SelectedValueChanged="OnSelectedToolChanged">
                         @foreach (var group in _groups)
                         {
                             <MudTreeViewItem T="string" Text="@group.Title" Value="@group.Title" Expanded="true">
@@ -95,9 +97,23 @@ else
                             <MudPaper Class="pa-3" Outlined="true">
                                 <MudText Typo="Typo.subtitle2">Validation</MudText>
                                 <MudText Typo="Typo.body2" Class="mt-2">@SelectedTool.ValidationNote</MudText>
+                                <MudText Typo="Typo.caption" Class="mt-2">Edit the request payload (JSON object) before running the selected tool.</MudText>
+                                <MudTextField T="string"
+                                              Class="mt-2"
+                                              @bind-Value="_validationArgumentsJson"
+                                              Variant="Variant.Outlined"
+                                              Label="Arguments"
+                                              Lines="10"
+                                              Immediate="true"
+                                              FullWidth="true" />
+                                @if (!string.IsNullOrWhiteSpace(_argumentEditorError))
+                                {
+                                    <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mt-2">@_argumentEditorError</MudAlert>
+                                }
                                 <MudStack Row="true" Spacing="1" Class="mt-2">
-                                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunSelectedValidationAsync" Disabled="@(!CanValidateSelectedTool)">Run smoke test</MudButton>
-                                    <MudButton Variant="Variant.Outlined" OnClick="SelectFirstSafeTool" Disabled="@(!_safeToolNames.Any())">Select safe tool</MudButton>
+                                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunSelectedValidationAsync" Disabled="@(!CanRunSelectedTool)">Run tool test</MudButton>
+                                    <MudButton Variant="Variant.Outlined" OnClick="ResetValidationArguments" Disabled="@(!_toolCatalog.Any())">Reset sample payload</MudButton>
+                                    <MudButton Variant="Variant.Outlined" OnClick="SelectFirstAvailableTool" Disabled="@(!_toolCatalog.Any())">Select first available</MudButton>
                                 </MudStack>
                             </MudPaper>
 
@@ -105,7 +121,7 @@ else
                             {
                                 <MudPaper Class="pa-3" Outlined="true">
                                     <MudText Typo="Typo.subtitle2">Latest result</MudText>
-                                    <MudText Typo="Typo.body2" Class="mt-2">@_validationResult</MudText>
+                                    <MudText Typo="Typo.body2" Class="mt-2" Style="white-space: pre-wrap;">@_validationResult</MudText>
                                 </MudPaper>
                             }
                         </MudStack>
@@ -132,15 +148,23 @@ else
         new("Automation helpers", "Export, templates, VBA, macro, and image tracing helpers.", ["export_file", "batch_export", "export_with_options", "capture_screenshot", "extract_drawing_template", "apply_drawing_template", "save_drawing_template", "generate_vba_script", "create_feature_vba", "create_batch_vba", "record_native_macro", "playback_native_macro", "trace_image_to_sketch", "trace_image_to_feature", "trace_image_to_drawing"])
     ];
 
+    private static readonly JsonSerializerOptions ReadableJsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     private ChatRuntime? _loadedRuntime;
     private IReadOnlyList<McpToolDescriptor> _toolCatalog = [];
     private IReadOnlyDictionary<string, McpToolDescriptor> _toolCatalogByName = new Dictionary<string, McpToolDescriptor>(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<CapabilityGroupViewModel> _groups = [];
-    private IReadOnlyList<string> _safeToolNames = [];
     private string? _selectedToolName;
     private string _statusText = "Connect to MCP to load the live tool catalog.";
     private string? _validationResult;
+    private string _validationArgumentsJson = "{}";
+    private string? _argumentEditorError;
     private bool _isRefreshing;
+    private bool _isValidating;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -150,10 +174,11 @@ else
             _toolCatalog = [];
             _toolCatalogByName = new Dictionary<string, McpToolDescriptor>(StringComparer.OrdinalIgnoreCase);
             _groups = [];
-            _safeToolNames = [];
             _selectedToolName = null;
             _statusText = "Connect to MCP to load the live tool catalog.";
             _validationResult = null;
+            _validationArgumentsJson = "{}";
+            _argumentEditorError = null;
             return;
         }
 
@@ -168,11 +193,16 @@ else
             ? null
             : _groups.SelectMany(group => group.Tools).FirstOrDefault(tool => string.Equals(tool.Name, _selectedToolName, StringComparison.OrdinalIgnoreCase));
 
-    private bool CanValidateSelectedTool
+    private McpToolDescriptor? SelectedToolDescriptor
+        => SelectedTool is null || !_toolCatalogByName.TryGetValue(SelectedTool.Name, out var descriptor)
+            ? null
+            : descriptor;
+
+    private bool CanRunSelectedTool
         => !_isRefreshing
+           && !_isValidating
            && SelectedTool is not null
-           && SelectedTool.IsAvailable
-           && _safeToolNames.Contains(SelectedTool.Name, StringComparer.OrdinalIgnoreCase);
+           && SelectedTool.IsAvailable;
 
     private async Task RefreshAsync()
     {
@@ -190,11 +220,10 @@ else
             _toolCatalog = await Runtime.GetToolCatalogAsync();
             _toolCatalogByName = _toolCatalog.ToDictionary(tool => tool.Name, StringComparer.OrdinalIgnoreCase);
             _groups = BuildGroups();
-            _safeToolNames = BuildSafeToolNames();
             _selectedToolName = _selectedToolName is not null && _toolCatalogByName.ContainsKey(_selectedToolName)
                 ? _selectedToolName
-                : _toolCatalog.FirstOrDefault(tool => _safeToolNames.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))?.Name
-                    ?? _toolCatalog.FirstOrDefault()?.Name;
+                : _toolCatalog.FirstOrDefault()?.Name;
+            ResetValidationArguments();
             _statusText = $"Loaded {_toolCatalog.Count} tools from MCP. {GetCoverageSummary()}";
         }
         catch (Exception ex)
@@ -203,8 +232,9 @@ else
             _toolCatalog = [];
             _toolCatalogByName = new Dictionary<string, McpToolDescriptor>(StringComparer.OrdinalIgnoreCase);
             _groups = [];
-            _safeToolNames = [];
             _selectedToolName = null;
+            _validationArgumentsJson = "{}";
+            _argumentEditorError = null;
         }
         finally
         {
@@ -245,29 +275,6 @@ else
         }).ToArray();
     }
 
-    private IReadOnlyList<string> BuildSafeToolNames()
-        => [
-            "get_active_document_info",
-            "list_part_templates",
-            "list_reference_planes",
-            "list_sketches",
-            "list_sketch_segments",
-            "get_sketch_status",
-            "list_bodies",
-            "list_faces",
-            "list_edges",
-            "list_vertices",
-            "list_features",
-            "get_bounding_box",
-            "get_mass_properties",
-            "check_errors",
-            "list_components",
-            "list_mates",
-            "list_sheets",
-            "list_drawing_views",
-            "get_rebuild_status"
-        ];
-
     private string GetCoverageSummary()
     {
         var covered = _groups.Count(group => string.Equals(group.CoverageLabel, "covered", StringComparison.OrdinalIgnoreCase));
@@ -277,24 +284,33 @@ else
     }
 
     private static string? GetSchemaText(McpToolDescriptor? descriptor)
-        => descriptor?.InputSchema?.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        => descriptor?.InputSchema?.ToJsonString(ReadableJsonOptions);
+
+    private async Task OnSelectedToolChanged(string? toolName)
+    {
+        _selectedToolName = toolName;
+        ResetValidationArguments();
+        await InvokeAsync(StateHasChanged);
+    }
 
     private async Task RunSelectedValidationAsync()
     {
-        if (!CanValidateSelectedTool || SelectedTool is null || Runtime is null)
+        if (!CanRunSelectedTool || SelectedTool is null || Runtime is null)
         {
             return;
         }
 
+        if (!TryParseValidationArguments(out var arguments))
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _isValidating = true;
+        _validationResult = null;
+
         try
         {
-            var arguments = BuildValidationArguments(SelectedTool.Name);
-            if (arguments is null)
-            {
-                _validationResult = $"No smoke-test arguments are defined for {SelectedTool.Name}.";
-                return;
-            }
-
             var result = await Runtime.InvokeToolAsync(SelectedTool.Name, arguments);
             _validationResult = string.Join("\n\n", new[]
             {
@@ -309,41 +325,208 @@ else
         }
         finally
         {
+            _isValidating = false;
             await InvokeAsync(StateHasChanged);
         }
     }
 
-    private static JsonObject? BuildValidationArguments(string toolName)
+    private bool TryParseValidationArguments(out JsonObject arguments)
+    {
+        arguments = new JsonObject();
+        _argumentEditorError = null;
+
+        var payload = string.IsNullOrWhiteSpace(_validationArgumentsJson) ? "{}" : _validationArgumentsJson;
+
+        try
+        {
+            var parsed = JsonNode.Parse(payload);
+            if (parsed is null)
+            {
+                arguments = new JsonObject();
+                return true;
+            }
+
+            if (parsed is not JsonObject jsonObject)
+            {
+                _argumentEditorError = "Arguments must be a JSON object (for example: {} or {\"name\":\"value\"}).";
+                return false;
+            }
+
+            arguments = jsonObject;
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            _argumentEditorError = $"Invalid JSON payload: {ex.Message}";
+            return false;
+        }
+    }
+
+    private void ResetValidationArguments()
+    {
+        var tool = SelectedTool;
+        var descriptor = SelectedToolDescriptor;
+        if (tool is null)
+        {
+            _validationArgumentsJson = "{}";
+            _argumentEditorError = null;
+            return;
+        }
+
+        var arguments = BuildValidationArguments(tool.Name, descriptor?.InputSchema);
+        _validationArgumentsJson = arguments.ToJsonString(ReadableJsonOptions);
+        _argumentEditorError = null;
+    }
+
+    private static JsonObject BuildValidationArguments(string toolName, JsonNode? schema)
+        => BuildPresetValidationArguments(toolName)
+            ?? BuildArgumentsFromSchema(schema)
+            ?? new JsonObject();
+
+    private static JsonObject? BuildPresetValidationArguments(string toolName)
         => toolName.ToLowerInvariant() switch
         {
-            "get_active_document_info" => new JsonObject(),
-            "list_part_templates" => new JsonObject(),
-            "list_reference_planes" => new JsonObject(),
-            "list_sketches" => new JsonObject(),
-            "list_sketch_segments" => new JsonObject(),
-            "get_sketch_status" => new JsonObject(),
-            "list_bodies" => new JsonObject(),
-            "list_faces" => new JsonObject(),
-            "list_edges" => new JsonObject(),
-            "list_vertices" => new JsonObject(),
-            "list_features" => new JsonObject(),
-            "get_bounding_box" => new JsonObject(),
-            "get_mass_properties" => new JsonObject(),
             "check_errors" => new JsonObject { ["rebuild_first"] = true },
-            "list_components" => new JsonObject(),
-            "list_mates" => new JsonObject(),
-            "list_sheets" => new JsonObject(),
-            "list_drawing_views" => new JsonObject(),
-            "get_rebuild_status" => new JsonObject(),
             _ => null
         };
 
-    private void SelectFirstSafeTool()
+    private static JsonObject? BuildArgumentsFromSchema(JsonNode? schema)
     {
-        var toolName = _safeToolNames.FirstOrDefault(name => _toolCatalogByName.ContainsKey(name));
+        var sample = BuildSampleValue(schema) as JsonObject;
+        return sample;
+    }
+
+    private static JsonNode? BuildSampleValue(JsonNode? schemaNode, string? propertyName = null)
+    {
+        if (schemaNode is not JsonObject schema)
+        {
+            return null;
+        }
+
+        if (schema["default"] is JsonNode defaultValue)
+        {
+            return defaultValue.DeepClone();
+        }
+
+        if (schema["examples"] is JsonArray examples && examples.Count > 0 && examples[0] is JsonNode exampleValue)
+        {
+            return exampleValue.DeepClone();
+        }
+
+        if (schema["enum"] is JsonArray enumValues && enumValues.Count > 0 && enumValues[0] is JsonNode enumValue)
+        {
+            return enumValue.DeepClone();
+        }
+
+        if (schema["oneOf"] is JsonArray oneOf && oneOf.Count > 0)
+        {
+            return BuildSampleValue(oneOf[0], propertyName);
+        }
+
+        if (schema["anyOf"] is JsonArray anyOf && anyOf.Count > 0)
+        {
+            return BuildSampleValue(anyOf[0], propertyName);
+        }
+
+        if (schema["allOf"] is JsonArray allOf && allOf.Count > 0)
+        {
+            return BuildSampleValue(allOf[0], propertyName);
+        }
+
+        return GetSchemaType(schema) switch
+        {
+            "object" => BuildObjectSample(schema),
+            "array" => BuildArraySample(schema, propertyName),
+            "integer" => 1,
+            "number" => 1.0,
+            "boolean" => true,
+            "string" => BuildStringSample(propertyName),
+            _ => null
+        };
+    }
+
+    private static JsonObject BuildObjectSample(JsonObject schema)
+    {
+        var sample = new JsonObject();
+        if (schema["properties"] is JsonObject properties)
+        {
+            foreach (var property in properties)
+            {
+                sample[property.Key] = BuildSampleValue(property.Value, property.Key);
+            }
+        }
+
+        if (schema["required"] is JsonArray required)
+        {
+            foreach (var requiredNode in required)
+            {
+                var propertyName = requiredNode?.GetValue<string>();
+                if (string.IsNullOrWhiteSpace(propertyName) || sample.ContainsKey(propertyName))
+                {
+                    continue;
+                }
+
+                sample[propertyName] = BuildStringSample(propertyName);
+            }
+        }
+
+        return sample;
+    }
+
+    private static JsonArray BuildArraySample(JsonObject schema, string? propertyName)
+    {
+        var sample = new JsonArray();
+        var itemSample = BuildSampleValue(schema["items"], propertyName);
+        if (itemSample is not null)
+        {
+            sample.Add(itemSample);
+        }
+
+        return sample;
+    }
+
+    private static string BuildStringSample(string? propertyName)
+        => string.IsNullOrWhiteSpace(propertyName)
+            ? "sample"
+            : propertyName.Contains("path", StringComparison.OrdinalIgnoreCase)
+                ? "<required-path>"
+                : propertyName.Contains("name", StringComparison.OrdinalIgnoreCase)
+                    ? "sample-name"
+                    : propertyName.Contains("id", StringComparison.OrdinalIgnoreCase)
+                        ? "sample-id"
+                        : "sample";
+
+    private static string? GetSchemaType(JsonObject schema)
+    {
+        if (schema["type"] is JsonValue typeValue && typeValue.TryGetValue<string>(out var directType))
+        {
+            return directType;
+        }
+
+        if (schema["type"] is not JsonArray typeArray)
+        {
+            return null;
+        }
+
+        foreach (var candidate in typeArray)
+        {
+            var value = candidate?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(value) && !string.Equals(value, "null", StringComparison.OrdinalIgnoreCase))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private void SelectFirstAvailableTool()
+    {
+        var toolName = _toolCatalog.FirstOrDefault()?.Name;
         if (!string.IsNullOrWhiteSpace(toolName))
         {
             _selectedToolName = toolName;
+            ResetValidationArguments();
         }
     }
 
@@ -358,7 +541,7 @@ else
     {
         public string Label => $"{Name} ({StatusLabel})";
         public string ValidationNote => IsAvailable
-            ? "This tool is exposed by the current C# server and can be smoke-tested from here if a safe argument preset exists."
+            ? "This tool is exposed by the current C# server. Start from the generated sample payload and adjust arguments before running the test."
             : "This tool is listed in the upstream capability map but is not yet exposed by the current C# server.";
     }
 }

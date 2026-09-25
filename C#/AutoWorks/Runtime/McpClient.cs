@@ -2,6 +2,7 @@ namespace AutoWorks.Runtime;
 
 using System.Diagnostics;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -14,6 +15,8 @@ internal sealed class McpClient : IDisposable
     private readonly JsonSerializerOptions serializerOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        WriteIndented = true,
     };
 
     private int nextId = 1;
