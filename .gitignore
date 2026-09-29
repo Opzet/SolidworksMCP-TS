@@ -72,3 +72,5 @@ EOF < /dev/null
 /C#/SolidworksChatClient.Tests/bin/Debug/net9.0-windows
 /C#/SolidworksChatClient.Tests/obj/Debug/net9.0-windows
 /C#/SolidworksChatClient.Tests/obj
+/C#/SolidworksMCP.Tests/bin/Release/net9.0
+/C#/.solidworks-mcp-state.json
