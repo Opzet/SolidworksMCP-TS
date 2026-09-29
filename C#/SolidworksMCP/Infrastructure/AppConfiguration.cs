@@ -28,8 +28,20 @@ public sealed record AppConfiguration
             PdmVault = Environment.GetEnvironmentVariable("PDM_VAULT"),
             SqlConnection = Environment.GetEnvironmentVariable("SQL_CONNECTION"),
             StateFile = Environment.GetEnvironmentVariable("STATE_FILE"),
-            OutputRoot = Environment.GetEnvironmentVariable("SW_MCP_OUTPUT_ROOT"),
+            OutputRoot = ResolveOutputRoot(),
             LogLevel = Environment.GetEnvironmentVariable("LOG_LEVEL") ?? "info",
         };
+    }
+
+    private static string ResolveOutputRoot()
+    {
+        var configured = Environment.GetEnvironmentVariable("SW_MCP_OUTPUT_ROOT");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        return Path.Combine(desktop, "AutoWorks");
     }
 }

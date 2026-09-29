@@ -56,9 +56,12 @@ public static class ToolHelpers
         var selection = GetDictionary(arguments, key);
         return new SelectionSpec
         {
-            Faces = GetIntList(selection, "faces"),
-            Edges = GetIntList(selection, "edges"),
-            Vertices = GetIntList(selection, "vertices"),
+            Faces = GetOptionalIntList(selection, "faces"),
+            FaceHandles = GetStringList(selection, "faces"),
+            Edges = GetOptionalIntList(selection, "edges"),
+            EdgeHandles = GetStringList(selection, "edges"),
+            Vertices = GetOptionalIntList(selection, "vertices"),
+            VertexHandles = GetStringList(selection, "vertices"),
             Planes = GetStringList(selection, "planes"),
             Axes = GetStringList(selection, "axes"),
             Sketches = GetStringList(selection, "sketches"),
@@ -94,27 +97,34 @@ public static class ToolHelpers
             return null;
         }
 
-        try
+        var parsed = new List<int>();
+        switch (value)
         {
-            return value switch
-            {
-                IEnumerable<object?> enumerable => enumerable.Select(ConvertToInt32).ToList(),
-                JsonElement element when element.ValueKind == JsonValueKind.Array => element.EnumerateArray().Select(item => ConvertToInt32(item)).ToList(),
-                _ => null,
-            };
+            case IEnumerable<object?> enumerable:
+                foreach (var item in enumerable)
+                {
+                    if (TryConvertToInt32(item, out var parsedItem))
+                    {
+                        parsed.Add(parsedItem);
+                    }
+                }
+
+                break;
+            case JsonElement element when element.ValueKind == JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (TryConvertToInt32(item, out var parsedItem))
+                    {
+                        parsed.Add(parsedItem);
+                    }
+                }
+
+                break;
+            default:
+                return null;
         }
-        catch (FormatException)
-        {
-            return null;
-        }
-        catch (InvalidCastException)
-        {
-            return null;
-        }
-        catch (OverflowException)
-        {
-            return null;
-        }
+
+        return parsed.Count > 0 ? parsed : null;
     }
 
     private static int ConvertToInt32(object? value)
@@ -124,6 +134,28 @@ public static class ToolHelpers
             JsonElement element when element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), out var parsed) => parsed,
             _ => Convert.ToInt32(value),
         };
+
+    private static bool TryConvertToInt32(object? value, out int parsed)
+    {
+        parsed = default;
+        try
+        {
+            parsed = ConvertToInt32(value);
+            return true;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+        catch (InvalidCastException)
+        {
+            return false;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+    }
 
     public static object SuccessText(string text) => text;
 

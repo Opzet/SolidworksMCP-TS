@@ -66,6 +66,52 @@ public sealed class SolidWorksApiCreateSketchTests
     }
 
     [TestMethod]
+    public void TryParseSketchEntityHandleIndexParsesLegacyLineHandleWithSketchSuffix()
+    {
+        var method = typeof(SolidWorksApi).GetMethod("TryParseSketchEntityHandleIndex", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+        object?[] args = ["L1@Sketch1", 0];
+
+        var parsed = method.Invoke(null, args);
+
+        Assert.AreEqual(true, parsed);
+        Assert.AreEqual(0, args[1]);
+    }
+
+    [TestMethod]
+    public void TryExtractSketchNameFromEntityHandleParsesLegacyLineHandleWithSketchSuffix()
+    {
+        var method = typeof(SolidWorksApi).GetMethod("TryExtractSketchNameFromEntityHandle", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+        object?[] args = ["L1@Sketch1", string.Empty];
+
+        var parsed = method.Invoke(null, args);
+
+        Assert.AreEqual(true, parsed);
+        Assert.AreEqual("Sketch1", args[1]);
+    }
+
+    [TestMethod]
+    public void ValidateSketchDimensionSelectionCountRejectsMultiEntityRadiusSelection()
+    {
+        var method = typeof(SolidWorksApi).GetMethod("ValidateSketchDimensionSelectionCount", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+
+        var exception = Assert.ThrowsException<TargetInvocationException>(() => method.Invoke(null, ["radius", 2]));
+        Assert.IsInstanceOfType<InvalidOperationException>(exception.InnerException);
+        StringAssert.Contains(exception.InnerException!.Message, "require exactly one sketch entity");
+    }
+
+    [TestMethod]
+    public void ValidateSketchDimensionSelectionCountAllowsTwoEntityHorizontalSelection()
+    {
+        var method = typeof(SolidWorksApi).GetMethod("ValidateSketchDimensionSelectionCount", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+
+        method.Invoke(null, ["horizontal", 2]);
+    }
+
+    [TestMethod]
     public async Task AddRectangleUsesLateBoundSketchManagerAccessor()
     {
         FakeLateBoundSketchManager sketchManager = new();
@@ -104,6 +150,33 @@ public sealed class SolidWorksApiCreateSketchTests
 
         Assert.AreEqual(true, result["success"]);
         Assert.AreEqual(1, sketchManager.CreateCircleCount);
+    }
+
+    [TestMethod]
+    public void AddLineReturnsSelectionPayloadWithSketchSegments()
+    {
+        FakeLateBoundSketchManager sketchManager = new();
+        FakeLateBoundModel model = new(sketchManager);
+        SolidWorksApi api = CreateApiWithModel(model);
+
+        Dictionary<string, object?> result = (Dictionary<string, object?>)api.AddLine(new Dictionary<string, object?>
+        {
+            ["x1"] = 0,
+            ["y1"] = 0,
+            ["x2"] = 25,
+            ["y2"] = 0,
+        });
+
+        Assert.AreEqual(true, result["success"]);
+        Assert.IsTrue(result.TryGetValue("selection", out var selectionObject));
+        Assert.IsNotNull(selectionObject);
+
+        var selection = selectionObject as Dictionary<string, object?>;
+        Assert.IsNotNull(selection);
+        Assert.AreEqual("Sketch1", selection["sketch_name"]);
+
+        var handles = (selection["sketch_segments"] as IEnumerable<object?>)?.Select(item => Convert.ToString(item)).Where(item => !string.IsNullOrWhiteSpace(item)).ToArray();
+        CollectionAssert.AreEqual(new[] { "Line1@Sketch1" }, handles);
     }
 
     [TestMethod]
@@ -254,7 +327,7 @@ public sealed class SolidWorksApiCreateSketchTests
         FakeSaveDocumentModel model = new();
         SolidWorksApi api = CreateApiWithModel(model);
         McpToolDefinition tool = ModelingTools.GetTools().Single(item => item.Name == "save_document");
-        var path = Path.Combine(Path.GetTempPath(), $"swmcp-{Guid.NewGuid():N}", "saved-part.sldprt");
+        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "AutoWorks", $"swmcp-{Guid.NewGuid():N}", "saved-part.sldprt");
         using JsonDocument document = JsonDocument.Parse(JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["path"] = path,
@@ -270,13 +343,37 @@ public sealed class SolidWorksApiCreateSketchTests
     public void SaveDocumentRejectsPathOutsideConfiguredOutputRoot()
     {
         FakeSaveDocumentModel model = new();
-        var outputRoot = Path.Combine(Path.GetTempPath(), $"swmcp-root-{Guid.NewGuid():N}");
+        var outputRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "AutoWorks", $"swmcp-root-{Guid.NewGuid():N}");
         SolidWorksApi api = CreateApiWithModel(model, outputRoot);
-        var disallowedPath = Path.Combine(Path.GetTempPath(), $"swmcp-outside-{Guid.NewGuid():N}", "saved-part.sldprt");
+        var disallowedPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "AutoWorks", $"swmcp-outside-{Guid.NewGuid():N}", "saved-part.sldprt");
 
         var exception = Assert.ThrowsException<InvalidOperationException>(() => api.SaveDocument(disallowedPath));
 
         StringAssert.Contains(exception.Message, "outside SW_MCP_OUTPUT_ROOT");
+    }
+
+    [TestMethod]
+    public void SaveDocumentRejectsPathOutsideDefaultAutoWorksRootWithoutOverride()
+    {
+        FakeSaveDocumentModel model = new();
+        SolidWorksApi api = CreateApiWithModel(model);
+        var disallowedPath = Path.Combine(Path.GetTempPath(), $"swmcp-outside-{Guid.NewGuid():N}", "saved-part.sldprt");
+
+        var exception = Assert.ThrowsException<InvalidOperationException>(() => api.SaveDocument(disallowedPath));
+
+        StringAssert.Contains(exception.Message, "outside Desktop\\AutoWorks");
+    }
+
+    [TestMethod]
+    public void SaveDocumentAllowsPathOutsideDefaultAutoWorksRootWithOverride()
+    {
+        FakeSaveDocumentModel model = new();
+        SolidWorksApi api = CreateApiWithModel(model);
+        var allowedPath = Path.Combine(Path.GetTempPath(), $"swmcp-override-{Guid.NewGuid():N}", "saved-part.sldprt");
+
+        var savedPath = api.SaveDocument(allowedPath, allowExternalPath: true);
+
+        Assert.AreEqual(Path.GetFullPath(allowedPath), savedPath);
     }
 
     [TestMethod]
@@ -782,6 +879,8 @@ public sealed class SolidWorksApiCreateSketchTests
 
         public int CreateCornerRectangleCount { get; private set; }
 
+        public int CreateLineCount { get; private set; }
+
         public object CreateCircle(double x, double y, double z, double radius)
         {
             _ = x;
@@ -789,7 +888,19 @@ public sealed class SolidWorksApiCreateSketchTests
             _ = z;
             _ = radius;
             CreateCircleCount++;
-            return new object();
+            return new FakeSketchSegment($"Circle{CreateCircleCount}@Sketch1");
+        }
+
+        public object CreateLine(double x1, double y1, double z1, double x2, double y2, double z2)
+        {
+            _ = x1;
+            _ = y1;
+            _ = z1;
+            _ = x2;
+            _ = y2;
+            _ = z2;
+            CreateLineCount++;
+            return new FakeSketchSegment($"Line{CreateLineCount}@Sketch1");
         }
 
         public object CreateCornerRectangle(double x1, double y1, double z1, double x2, double y2, double z2)
@@ -801,7 +912,13 @@ public sealed class SolidWorksApiCreateSketchTests
             _ = y2;
             _ = z2;
             CreateCornerRectangleCount++;
-            return new object();
+            return new object[]
+            {
+                new FakeSketchSegment("Line1@Sketch1"),
+                new FakeSketchSegment("Line2@Sketch1"),
+                new FakeSketchSegment("Line3@Sketch1"),
+                new FakeSketchSegment("Line4@Sketch1"),
+            };
         }
 
         public bool InsertSketch(bool updateEditRebuild)
@@ -809,6 +926,11 @@ public sealed class SolidWorksApiCreateSketchTests
             _ = updateEditRebuild;
             return true;
         }
+    }
+
+    private sealed class FakeSketchSegment(string selectionName)
+    {
+        public string GetNameForSelection() => selectionName;
     }
 
     private sealed class FakeVoidExitSketchManager

@@ -95,21 +95,137 @@ else
                             </MudPaper>
 
                             <MudPaper Class="pa-3" Outlined="true">
-                                <MudText Typo="Typo.subtitle2">Validation</MudText>
+                                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                                    <MudText Typo="Typo.subtitle2">Validation</MudText>
+                                    @if (IsSolidWorksStyleValidationSupportedTool(SelectedTool.Name))
+                                    {
+                                        <MudSwitch T="bool"
+                                                   @bind-Value="_useAdvancedJsonEditor"
+                                                   Color="Color.Primary"
+                                                   Label="Advanced JSON editor" />
+                                    }
+                                </MudStack>
                                 <MudText Typo="Typo.body2" Class="mt-2">@SelectedTool.ValidationNote</MudText>
-                                <MudText Typo="Typo.caption" Class="mt-2">Edit the request payload (JSON object) before running the selected tool.</MudText>
-                                <MudTextField T="string"
-                                              Class="mt-2"
-                                              @bind-Value="_validationArgumentsJson"
-                                              Variant="Variant.Outlined"
-                                              Label="Arguments"
-                                              Lines="10"
-                                              Immediate="true"
-                                              FullWidth="true" />
-                                @if (!string.IsNullOrWhiteSpace(_argumentEditorError))
+
+                                @if (IsAddTool(SelectedTool.Name) && _addToolTypeOptions.Count > 0 && !string.IsNullOrWhiteSpace(_addToolTypePropertyName))
                                 {
-                                    <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mt-2">@_argumentEditorError</MudAlert>
+                                    <MudPaper Class="pa-2 mt-2" Outlined="true">
+                                        <MudText Typo="Typo.caption">SolidWorks type picker</MudText>
+                                        <MudSelect T="string" @bind-Value="_selectedAddToolType" Variant="Variant.Outlined" Dense="true" Class="mt-1" Label="@($"{_addToolTypePropertyName} type")">
+                                            @foreach (var option in _addToolTypeOptions)
+                                            {
+                                                <MudSelectItem T="string" Value="@option">@option</MudSelectItem>
+                                            }
+                                        </MudSelect>
+                                    </MudPaper>
                                 }
+
+                                @if (ShowSolidWorksStyleValidationForm && IsCircleValidationTool(SelectedTool.Name))
+                                {
+                                    <MudExpansionPanels Class="mt-2" MultiExpansion="true">
+                                        <MudExpansionPanel Text="Circle Type" Expanded="true">
+                                            <MudRadioGroup T="string" @bind-Value="_circleFormState.CircleType">
+                                                <MudRadio T="string" Value="@( "center_radius" )" Dense="true">Center, Radius</MudRadio>
+                                                <MudRadio T="string" Value="@("3_point")" Dense="true">3 Point (preview)</MudRadio>
+                                            </MudRadioGroup>
+                                        </MudExpansionPanel>
+
+                                        <MudExpansionPanel Text="Existing Relations" Expanded="true">
+                                            <MudText Typo="Typo.caption">Relation discovery from live sketch entities will be added as more tools are form-enabled.</MudText>
+                                            <MudChip T="string" Class="mt-2" Color="Color.Info" Variant="Variant.Outlined">Under Defined</MudChip>
+                                        </MudExpansionPanel>
+
+                                        <MudExpansionPanel Text="Add Relations" Expanded="true">
+                                            <MudCheckBox T="bool" @bind-Value="_circleFormState.AddFixRelation" Label="Fix" Dense="true" />
+                                        </MudExpansionPanel>
+
+                                        <MudExpansionPanel Text="Options" Expanded="true">
+                                            <MudCheckBox T="bool" @bind-Value="_circleFormState.ForConstruction" Label="For construction" Dense="true" />
+                                        </MudExpansionPanel>
+
+                                        <MudExpansionPanel Text="Parameters" Expanded="true">
+                                            <MudNumericField T="double" @bind-Value="_circleFormState.CenterXmm" Label="Center X (mm)" Variant="Variant.Outlined" Immediate="true" />
+                                            <MudNumericField T="double" @bind-Value="_circleFormState.CenterYmm" Label="Center Y (mm)" Variant="Variant.Outlined" Immediate="true" Class="mt-2" />
+                                            <MudNumericField T="double" @bind-Value="_circleFormState.RadiusMm" Label="Radius (mm)" Variant="Variant.Outlined" Immediate="true" Min="0.001" Class="mt-2" />
+                                        </MudExpansionPanel>
+                                    </MudExpansionPanels>
+                                }
+                                else if (ShowSolidWorksStyleValidationForm && IsLineValidationTool(SelectedTool.Name))
+                                {
+                                    <MudExpansionPanels Class="mt-2" MultiExpansion="true">
+                                        <MudExpansionPanel Text="Line Type" Expanded="true">
+                                            <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined">Centerline-style entry (2-point)</MudChip>
+                                        </MudExpansionPanel>
+                                        <MudExpansionPanel Text="Options" Expanded="true">
+                                            <MudCheckBox T="bool" @bind-Value="_lineFormState.ForConstruction" Label="For construction" Dense="true" />
+                                        </MudExpansionPanel>
+                                        <MudExpansionPanel Text="Parameters" Expanded="true">
+                                            <MudNumericField T="double" @bind-Value="_lineFormState.X1mm" Label="Start X (mm)" Variant="Variant.Outlined" Immediate="true" />
+                                            <MudNumericField T="double" @bind-Value="_lineFormState.Y1mm" Label="Start Y (mm)" Variant="Variant.Outlined" Immediate="true" Class="mt-2" />
+                                            <MudNumericField T="double" @bind-Value="_lineFormState.X2mm" Label="End X (mm)" Variant="Variant.Outlined" Immediate="true" Class="mt-2" />
+                                            <MudNumericField T="double" @bind-Value="_lineFormState.Y2mm" Label="End Y (mm)" Variant="Variant.Outlined" Immediate="true" Class="mt-2" />
+                                        </MudExpansionPanel>
+                                    </MudExpansionPanels>
+                                }
+                                else if (ShowSolidWorksStyleValidationForm && IsRectangleValidationTool(SelectedTool.Name))
+                                {
+                                    <MudExpansionPanels Class="mt-2" MultiExpansion="true">
+                                        <MudExpansionPanel Text="Rectangle Type" Expanded="true">
+                                            <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined">Corner Rectangle</MudChip>
+                                        </MudExpansionPanel>
+                                        <MudExpansionPanel Text="Options" Expanded="true">
+                                            <MudCheckBox T="bool" @bind-Value="_rectangleFormState.ForConstruction" Label="For construction" Dense="true" />
+                                        </MudExpansionPanel>
+                                        <MudExpansionPanel Text="Parameters" Expanded="true">
+                                            <MudNumericField T="double" @bind-Value="_rectangleFormState.X1mm" Label="Corner 1 X (mm)" Variant="Variant.Outlined" Immediate="true" />
+                                            <MudNumericField T="double" @bind-Value="_rectangleFormState.Y1mm" Label="Corner 1 Y (mm)" Variant="Variant.Outlined" Immediate="true" Class="mt-2" />
+                                            <MudNumericField T="double" @bind-Value="_rectangleFormState.X2mm" Label="Corner 2 X (mm)" Variant="Variant.Outlined" Immediate="true" Class="mt-2" />
+                                            <MudNumericField T="double" @bind-Value="_rectangleFormState.Y2mm" Label="Corner 2 Y (mm)" Variant="Variant.Outlined" Immediate="true" Class="mt-2" />
+                                        </MudExpansionPanel>
+                                    </MudExpansionPanels>
+                                }
+                                else if (ShowSolidWorksStyleValidationForm && IsDimensionValidationTool(SelectedTool.Name))
+                                {
+                                    <MudExpansionPanels Class="mt-2" MultiExpansion="true">
+                                        <MudExpansionPanel Text="Selection" Expanded="true">
+                                            <MudCheckBox T="bool" @bind-Value="_dimensionFormState.UseLatestSelection" Label="Use latest tool result selection" Dense="true" />
+                                            <MudTextField T="string" @bind-Value="_dimensionFormState.SketchName" Label="Sketch name override" Variant="Variant.Outlined" Class="mt-2" Immediate="true" />
+                                            <MudTextField T="string" @bind-Value="_dimensionFormState.SketchSegmentsCsv" Label="Sketch segment handles (comma-separated)" Variant="Variant.Outlined" Class="mt-2" Immediate="true" />
+                                            <MudText Typo="Typo.caption" Class="mt-1">Example: L1@Sketch1 or Line1@Sketch1</MudText>
+                                        </MudExpansionPanel>
+                                        <MudExpansionPanel Text="Dimension Type" Expanded="true">
+                                            <MudSelect T="string" @bind-Value="_dimensionFormState.Kind" Variant="Variant.Outlined" Label="Kind">
+                                                <MudSelectItem T="string" Value="@( "auto" )">Auto</MudSelectItem>
+                                                <MudSelectItem T="string" Value="@( "horizontal" )">Horizontal</MudSelectItem>
+                                                <MudSelectItem T="string" Value="@( "vertical" )">Vertical</MudSelectItem>
+                                                <MudSelectItem T="string" Value="@( "radius" )">Radius</MudSelectItem>
+                                                <MudSelectItem T="string" Value="@( "diameter" )">Diameter</MudSelectItem>
+                                            </MudSelect>
+                                        </MudExpansionPanel>
+                                        <MudExpansionPanel Text="Parameters" Expanded="true">
+                                            <MudNumericField T="double" @bind-Value="_dimensionFormState.ValueMm" Label="Value (mm)" Variant="Variant.Outlined" Immediate="true" />
+                                            <MudNumericField T="double" @bind-Value="_dimensionFormState.PlaceXmm" Label="Text X (mm)" Variant="Variant.Outlined" Immediate="true" Class="mt-2" />
+                                            <MudNumericField T="double" @bind-Value="_dimensionFormState.PlaceYmm" Label="Text Y (mm)" Variant="Variant.Outlined" Immediate="true" Class="mt-2" />
+                                        </MudExpansionPanel>
+                                    </MudExpansionPanels>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption" Class="mt-2">Edit the request payload (JSON object) before running the selected tool.</MudText>
+                                    <MudTextField T="string"
+                                                  Class="mt-2"
+                                                  @bind-Value="_validationArgumentsJson"
+                                                  Variant="Variant.Outlined"
+                                                  Label="Arguments"
+                                                  Lines="10"
+                                                  Immediate="true"
+                                                  FullWidth="true" />
+                                    @if (!string.IsNullOrWhiteSpace(_argumentEditorError))
+                                    {
+                                        <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mt-2">@_argumentEditorError</MudAlert>
+                                    }
+                                }
+
                                 <MudStack Row="true" Spacing="1" Class="mt-2">
                                     <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunSelectedValidationAsync" Disabled="@(!CanRunSelectedTool)">Run tool test</MudButton>
                                     <MudButton Variant="Variant.Outlined" OnClick="ResetValidationArguments" Disabled="@(!_toolCatalog.Any())">Reset sample payload</MudButton>
@@ -165,6 +281,15 @@ else
     private string? _argumentEditorError;
     private bool _isRefreshing;
     private bool _isValidating;
+    private JsonObject? _latestStructuredResult;
+    private bool _useAdvancedJsonEditor;
+    private string? _addToolTypePropertyName;
+    private IReadOnlyList<string> _addToolTypeOptions = [];
+    private string? _selectedAddToolType;
+    private CircleValidationFormState _circleFormState = CircleValidationFormState.CreateDefault();
+    private LineValidationFormState _lineFormState = LineValidationFormState.CreateDefault();
+    private RectangleValidationFormState _rectangleFormState = RectangleValidationFormState.CreateDefault();
+    private DimensionValidationFormState _dimensionFormState = DimensionValidationFormState.CreateDefault();
 
     protected override async Task OnParametersSetAsync()
     {
@@ -179,6 +304,15 @@ else
             _validationResult = null;
             _validationArgumentsJson = "{}";
             _argumentEditorError = null;
+            _latestStructuredResult = null;
+            _useAdvancedJsonEditor = false;
+            _addToolTypePropertyName = null;
+            _addToolTypeOptions = [];
+            _selectedAddToolType = null;
+            _circleFormState = CircleValidationFormState.CreateDefault();
+            _lineFormState = LineValidationFormState.CreateDefault();
+            _rectangleFormState = RectangleValidationFormState.CreateDefault();
+            _dimensionFormState = DimensionValidationFormState.CreateDefault();
             return;
         }
 
@@ -204,6 +338,40 @@ else
            && SelectedTool is not null
            && SelectedTool.IsAvailable;
 
+    private bool IsSolidWorksStyleValidationSupportedTool(string? toolName)
+        => IsCircleValidationTool(toolName)
+            || IsLineValidationTool(toolName)
+            || IsRectangleValidationTool(toolName)
+            || IsDimensionValidationTool(toolName);
+
+    private static bool IsCircleValidationTool(string? toolName)
+        => !string.IsNullOrWhiteSpace(toolName)
+            && (toolName.Equals("add_circle", StringComparison.OrdinalIgnoreCase)
+                || toolName.Equals("draw_circle", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsLineValidationTool(string? toolName)
+        => !string.IsNullOrWhiteSpace(toolName)
+            && (toolName.Equals("add_line", StringComparison.OrdinalIgnoreCase)
+                || toolName.Equals("draw_line", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsRectangleValidationTool(string? toolName)
+        => !string.IsNullOrWhiteSpace(toolName)
+            && (toolName.Equals("add_rectangle", StringComparison.OrdinalIgnoreCase)
+                || toolName.Equals("draw_rectangle", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsDimensionValidationTool(string? toolName)
+        => !string.IsNullOrWhiteSpace(toolName)
+            && toolName.Equals("add_dimension", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAddTool(string? toolName)
+        => !string.IsNullOrWhiteSpace(toolName)
+            && toolName.StartsWith("add_", StringComparison.OrdinalIgnoreCase);
+
+    private bool ShowSolidWorksStyleValidationForm
+        => !_useAdvancedJsonEditor
+           && SelectedTool is not null
+           && IsSolidWorksStyleValidationSupportedTool(SelectedTool.Name);
+
     private async Task RefreshAsync()
     {
         if (Runtime is null)
@@ -213,6 +381,7 @@ else
 
         _isRefreshing = true;
         _validationResult = null;
+        _latestStructuredResult = null;
 
         try
         {
@@ -235,6 +404,14 @@ else
             _selectedToolName = null;
             _validationArgumentsJson = "{}";
             _argumentEditorError = null;
+            _useAdvancedJsonEditor = false;
+            _addToolTypePropertyName = null;
+            _addToolTypeOptions = [];
+            _selectedAddToolType = null;
+            _circleFormState = CircleValidationFormState.CreateDefault();
+            _lineFormState = LineValidationFormState.CreateDefault();
+            _rectangleFormState = RectangleValidationFormState.CreateDefault();
+            _dimensionFormState = DimensionValidationFormState.CreateDefault();
         }
         finally
         {
@@ -300,18 +477,33 @@ else
             return;
         }
 
-        if (!TryParseValidationArguments(out var arguments))
+        JsonObject arguments;
+        if (ShowSolidWorksStyleValidationForm && IsSolidWorksStyleValidationSupportedTool(SelectedTool.Name))
         {
-            await InvokeAsync(StateHasChanged);
-            return;
+            arguments = BuildSolidWorksStyleValidationArguments(SelectedTool.Name);
         }
+        else
+        {
+            if (!TryParseValidationArguments(out arguments))
+            {
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+        }
+
+        var seededArguments = SeedValidationArgumentsFromLatestResult(SelectedTool.Name, arguments, _latestStructuredResult);
+        ApplyAddToolTypePickerValue(seededArguments);
+        _validationArgumentsJson = seededArguments.ToJsonString(ReadableJsonOptions);
 
         _isValidating = true;
         _validationResult = null;
 
         try
         {
-            var result = await Runtime.InvokeToolAsync(SelectedTool.Name, arguments);
+            var result = await Runtime.InvokeToolAsync(SelectedTool.Name, seededArguments);
+            _latestStructuredResult = result.StructuredData
+                ?? TryParseJsonObject(result.DisplayText)
+                ?? TryParseJsonObject(result.RawJson);
             _validationResult = string.Join("\n\n", new[]
             {
                 result.DisplayText,
@@ -370,11 +562,22 @@ else
         {
             _validationArgumentsJson = "{}";
             _argumentEditorError = null;
+            _addToolTypePropertyName = null;
+            _addToolTypeOptions = [];
+            _selectedAddToolType = null;
+            _circleFormState = CircleValidationFormState.CreateDefault();
+            _lineFormState = LineValidationFormState.CreateDefault();
+            _rectangleFormState = RectangleValidationFormState.CreateDefault();
+            _dimensionFormState = DimensionValidationFormState.CreateDefault();
             return;
         }
 
+        InitializeValidationFormState(tool.Name);
         var arguments = BuildValidationArguments(tool.Name, descriptor?.InputSchema);
-        _validationArgumentsJson = arguments.ToJsonString(ReadableJsonOptions);
+        var seededArguments = SeedValidationArgumentsFromLatestResult(tool.Name, arguments, _latestStructuredResult);
+        ConfigureAddToolTypePicker(tool.Name, descriptor?.InputSchema, seededArguments);
+        ApplyAddToolTypePickerValue(seededArguments);
+        _validationArgumentsJson = seededArguments.ToJsonString(ReadableJsonOptions);
         _argumentEditorError = null;
     }
 
@@ -383,6 +586,113 @@ else
             ?? BuildArgumentsFromSchema(schema)
             ?? new JsonObject();
 
+    private JsonObject BuildSolidWorksStyleValidationArguments(string toolName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+
+        if (IsCircleValidationTool(toolName))
+        {
+            return BuildCircleValidationArguments();
+        }
+
+        if (IsLineValidationTool(toolName))
+        {
+            return BuildLineValidationArguments();
+        }
+
+        if (IsRectangleValidationTool(toolName))
+        {
+            return BuildRectangleValidationArguments();
+        }
+
+        if (IsDimensionValidationTool(toolName))
+        {
+            return BuildDimensionValidationArguments();
+        }
+
+        return new JsonObject();
+    }
+
+    private JsonObject BuildCircleValidationArguments()
+    {
+        var arguments = new JsonObject
+        {
+            ["centerX"] = _circleFormState.CenterXmm,
+            ["centerY"] = _circleFormState.CenterYmm,
+            ["centerZ"] = 0d,
+            ["radius"] = Math.Max(_circleFormState.RadiusMm, 0.001d)
+        };
+
+        return arguments;
+    }
+
+    private JsonObject BuildLineValidationArguments()
+    {
+        var arguments = new JsonObject
+        {
+            ["x1"] = _lineFormState.X1mm,
+            ["y1"] = _lineFormState.Y1mm,
+            ["z1"] = 0d,
+            ["x2"] = _lineFormState.X2mm,
+            ["y2"] = _lineFormState.Y2mm,
+            ["z2"] = 0d
+        };
+
+        return arguments;
+    }
+
+    private JsonObject BuildRectangleValidationArguments()
+    {
+        var arguments = new JsonObject
+        {
+            ["x1"] = _rectangleFormState.X1mm,
+            ["y1"] = _rectangleFormState.Y1mm,
+            ["x2"] = _rectangleFormState.X2mm,
+            ["y2"] = _rectangleFormState.Y2mm
+        };
+
+        return arguments;
+    }
+
+    private JsonObject BuildDimensionValidationArguments()
+    {
+        var arguments = new JsonObject
+        {
+            ["selection"] = new JsonObject(),
+            ["kind"] = string.IsNullOrWhiteSpace(_dimensionFormState.Kind) ? "auto" : _dimensionFormState.Kind,
+            ["value_mm"] = _dimensionFormState.ValueMm,
+            ["place_x_mm"] = _dimensionFormState.PlaceXmm,
+            ["place_y_mm"] = _dimensionFormState.PlaceYmm,
+            ["place_z_mm"] = 0d
+        };
+
+        if (_dimensionFormState.UseLatestSelection && _latestStructuredResult is not null)
+        {
+            MergeSelectionSeed(arguments, _latestStructuredResult);
+        }
+
+        JsonObject selection = arguments["selection"] as JsonObject ?? [];
+        if (!string.IsNullOrWhiteSpace(_dimensionFormState.SketchName))
+        {
+            selection["sketch_name"] = _dimensionFormState.SketchName;
+        }
+
+        var handles = ParseCsvValues(_dimensionFormState.SketchSegmentsCsv);
+        if (handles.Count > 0)
+        {
+            var segments = new JsonArray();
+            foreach (var handle in handles)
+            {
+                segments.Add(handle);
+            }
+
+            selection["sketch_segments"] = segments;
+        }
+
+        arguments["selection"] = selection;
+        return arguments;
+    }
+
     private static JsonObject? BuildPresetValidationArguments(string toolName)
         => toolName.ToLowerInvariant() switch
         {
@@ -390,10 +700,207 @@ else
             _ => null
         };
 
+    private void ConfigureAddToolTypePicker(string toolName, JsonNode? schema, JsonObject arguments)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+        ArgumentNullException.ThrowIfNull(arguments);
+
+        _addToolTypePropertyName = null;
+        _addToolTypeOptions = [];
+        _selectedAddToolType = null;
+
+        if (!IsAddTool(toolName) || !TryGetAddToolTypePickerDefinition(schema, out var propertyName, out var options, out var defaultValue))
+        {
+            return;
+        }
+
+        _addToolTypePropertyName = propertyName;
+        _addToolTypeOptions = options;
+
+        if (arguments[propertyName] is JsonValue argumentTypeValue && argumentTypeValue.TryGetValue<string>(out var argumentType) && options.Contains(argumentType, StringComparer.OrdinalIgnoreCase))
+        {
+            _selectedAddToolType = argumentType;
+            return;
+        }
+
+        _selectedAddToolType = !string.IsNullOrWhiteSpace(defaultValue)
+            ? defaultValue
+            : options.FirstOrDefault();
+    }
+
+    private void ApplyAddToolTypePickerValue(JsonObject arguments)
+    {
+        ArgumentNullException.ThrowIfNull(arguments);
+        if (string.IsNullOrWhiteSpace(_addToolTypePropertyName)
+            || string.IsNullOrWhiteSpace(_selectedAddToolType)
+            || _addToolTypeOptions.Count == 0)
+        {
+            return;
+        }
+
+        arguments[_addToolTypePropertyName] = _selectedAddToolType;
+    }
+
+    private static bool TryGetAddToolTypePickerDefinition(JsonNode? schema, out string propertyName, out IReadOnlyList<string> options, out string? defaultValue)
+    {
+        propertyName = string.Empty;
+        options = [];
+        defaultValue = null;
+
+        if (schema is not JsonObject schemaObject || schemaObject["properties"] is not JsonObject properties)
+        {
+            return false;
+        }
+
+        foreach (var candidateProperty in new[] { "kind", "type", "mode", "relation" })
+        {
+            if (properties[candidateProperty] is not JsonObject propertySchema || propertySchema["enum"] is not JsonArray enumValues)
+            {
+                continue;
+            }
+
+            var extractedOptions = enumValues
+                .OfType<JsonValue>()
+                .Select(value => value.TryGetValue<string>(out var stringValue) ? stringValue : null)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (extractedOptions.Length == 0)
+            {
+                continue;
+            }
+
+            propertyName = candidateProperty;
+            options = extractedOptions;
+            if (propertySchema["default"] is JsonValue defaultJsonValue && defaultJsonValue.TryGetValue<string>(out var defaultStringValue))
+            {
+                defaultValue = defaultStringValue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     private static JsonObject? BuildArgumentsFromSchema(JsonNode? schema)
     {
         var sample = BuildSampleValue(schema) as JsonObject;
         return sample;
+    }
+
+    private void InitializeValidationFormState(string toolName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+
+        if (IsCircleValidationTool(toolName))
+        {
+            _circleFormState = CircleValidationFormState.CreateDefault();
+        }
+
+        if (IsLineValidationTool(toolName))
+        {
+            _lineFormState = LineValidationFormState.CreateDefault();
+        }
+
+        if (IsRectangleValidationTool(toolName))
+        {
+            _rectangleFormState = RectangleValidationFormState.CreateDefault();
+        }
+
+        if (IsDimensionValidationTool(toolName))
+        {
+            _dimensionFormState = DimensionValidationFormState.CreateDefault();
+        }
+    }
+
+    private static IReadOnlyList<string> ParseCsvValues(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv))
+        {
+            return [];
+        }
+
+        return csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+    }
+
+    private static JsonObject SeedValidationArgumentsFromLatestResult(string toolName, JsonObject arguments, JsonObject? latestResult)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+        ArgumentNullException.ThrowIfNull(arguments);
+        if (latestResult is null)
+        {
+            return arguments;
+        }
+
+        var seededArguments = (JsonObject)arguments.DeepClone();
+        if (toolName.Equals("add_dimension", StringComparison.OrdinalIgnoreCase)
+            || toolName.Equals("add_relation", StringComparison.OrdinalIgnoreCase)
+            || toolName.Equals("set_construction_geometry", StringComparison.OrdinalIgnoreCase))
+        {
+            MergeSelectionSeed(seededArguments, latestResult);
+        }
+
+        return seededArguments;
+    }
+
+    private static void MergeSelectionSeed(JsonObject arguments, JsonObject latestResult)
+    {
+        ArgumentNullException.ThrowIfNull(arguments);
+        ArgumentNullException.ThrowIfNull(latestResult);
+
+        JsonObject selection = arguments["selection"] as JsonObject ?? [];
+        var hasSelectionInArguments = arguments["selection"] is JsonObject;
+
+        if (latestResult["selection"] is JsonObject latestSelection)
+        {
+            CopyIfMissing(selection, "sketch_name", latestSelection["sketch_name"]);
+            CopyIfMissing(selection, "sketch_segments", latestSelection["sketch_segments"]);
+            CopyIfMissing(selection, "sketch_points", latestSelection["sketch_points"]);
+        }
+
+        CopyIfMissing(selection, "sketch_name", latestResult["sketch_name"]);
+        CopyIfMissing(selection, "sketch_segments", latestResult["sketch_segments"]);
+        CopyIfMissing(selection, "sketch_points", latestResult["sketch_points"]);
+
+        if (!hasSelectionInArguments && selection.Count > 0)
+        {
+            arguments["selection"] = selection;
+        }
+    }
+
+    private static void CopyIfMissing(JsonObject target, string key, JsonNode? value)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+
+        if (target.ContainsKey(key) || value is null)
+        {
+            return;
+        }
+
+        target[key] = value.DeepClone();
+    }
+
+    private static JsonObject? TryParseJsonObject(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonNode.Parse(json) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static JsonNode? BuildSampleValue(JsonNode? schemaNode, string? propertyName = null)
@@ -543,5 +1050,71 @@ else
         public string ValidationNote => IsAvailable
             ? "This tool is exposed by the current C# server. Start from the generated sample payload and adjust arguments before running the test."
             : "This tool is listed in the upstream capability map but is not yet exposed by the current C# server.";
+    }
+
+    private sealed class CircleValidationFormState
+    {
+        public string CircleType { get; set; } = "center_radius";
+
+        public bool ForConstruction { get; set; }
+
+        public bool AddFixRelation { get; set; }
+
+        public double CenterXmm { get; set; }
+
+        public double CenterYmm { get; set; }
+
+        public double RadiusMm { get; set; } = 25;
+
+        public static CircleValidationFormState CreateDefault() => new();
+    }
+
+    private sealed class LineValidationFormState
+    {
+        public bool ForConstruction { get; set; }
+
+        public double X1mm { get; set; }
+
+        public double Y1mm { get; set; }
+
+        public double X2mm { get; set; } = 25;
+
+        public double Y2mm { get; set; }
+
+        public static LineValidationFormState CreateDefault() => new();
+    }
+
+    private sealed class RectangleValidationFormState
+    {
+        public bool ForConstruction { get; set; }
+
+        public double X1mm { get; set; }
+
+        public double Y1mm { get; set; }
+
+        public double X2mm { get; set; } = 40;
+
+        public double Y2mm { get; set; } = 20;
+
+        public static RectangleValidationFormState CreateDefault() => new();
+    }
+
+    private sealed class DimensionValidationFormState
+    {
+        public bool UseLatestSelection { get; set; } = true;
+
+        public string Kind { get; set; } = "auto";
+
+        public double ValueMm { get; set; } = 25;
+
+        public double PlaceXmm { get; set; }
+
+        public double PlaceYmm { get; set; }
+
+        public string? SketchName { get; set; }
+
+        public string? SketchSegmentsCsv { get; set; }
+
+        public static DimensionValidationFormState CreateDefault() => new();
     }
 }

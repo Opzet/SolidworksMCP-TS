@@ -16,7 +16,8 @@ public static class DrawingTools
         new McpToolDefinition("list_drawing_views", "List views in the active drawing", JsonSchemaBuilder.Object(), HandleListDrawingViews),
         new McpToolDefinition("activate_drawing_view", "Activate a drawing view by name", JsonSchemaBuilder.ObjectWithRequired(["view_name"], ("view_name", JsonSchemaBuilder.String("Drawing view name"))), HandleActivateDrawingView),
         new McpToolDefinition("set_drawing_view", "Activate or inspect a drawing view by name", JsonSchemaBuilder.ObjectWithRequired(["viewName"], ("viewName", JsonSchemaBuilder.String("Drawing view name"))), HandleSetDrawingView),
-        new McpToolDefinition("add_section_view", "Add a section view to the drawing", JsonSchemaBuilder.ObjectWithRequired(["parentView", "x", "y", "sectionLine"], ("parentView", JsonSchemaBuilder.String()), ("x", JsonSchemaBuilder.Number()), ("y", JsonSchemaBuilder.Number()), ("sectionLine", JsonSchemaBuilder.Any())), HandleAddSectionView),
+        new McpToolDefinition("get_drawing_capabilities", "Report drawing API capability and fallback strategy for reliable automation", JsonSchemaBuilder.Object(), HandleGetDrawingCapabilities),
+        new McpToolDefinition("add_section_view", "Add a section view to the drawing", JsonSchemaBuilder.ObjectWithRequired(["parentView", "x", "y", "sectionLine"], ("parentView", JsonSchemaBuilder.String()), ("x", JsonSchemaBuilder.Number()), ("y", JsonSchemaBuilder.Number()), ("sectionLine", JsonSchemaBuilder.Any()), ("fallback_macro", JsonSchemaBuilder.Any("Optional macro fallback: {macro_path,module_name,procedure_name}"))), HandleAddSectionView),
     ];
 
     private static ValueTask<object?> HandleCreateDrawingFromModel(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
@@ -139,57 +140,43 @@ public static class DrawingTools
         }
     }
 
+    private static ValueTask<object?> HandleGetDrawingCapabilities(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
+    {
+        _ = arguments;
+        _ = cancellationToken;
+        try
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(api.GetDrawingCapabilities()));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromResult<object?>(ToolHelpers.Failure($"Failed to get drawing capabilities: {ex.Message}"));
+        }
+    }
+
     private static ValueTask<object?> HandleAddSectionView(JsonElement? arguments, SolidWorksApi api, CancellationToken cancellationToken)
     {
         _ = cancellationToken;
         try
         {
             var args = ToolHelpers.ToArguments(arguments);
-            var drawingDoc = api.GetCurrentModel() ?? throw new InvalidOperationException("Current document must be a drawing");
-
-            var parentViewName = ToolHelpers.GetString(args, "parentView");
-            var xMeters = ToolHelpers.GetDouble(args, "x") / 1000d;
-            var yMeters = ToolHelpers.GetDouble(args, "y") / 1000d;
-
             var sectionLine = ToolHelpers.GetDictionary(args, "sectionLine");
-            var x1 = ToolHelpers.GetDouble(sectionLine, "x1", 0) / 1000d;
-            var y1 = ToolHelpers.GetDouble(sectionLine, "y1", 0) / 1000d;
-            var x2 = ToolHelpers.GetDouble(sectionLine, "x2", 0) / 1000d;
-            var y2 = ToolHelpers.GetDouble(sectionLine, "y2", 0) / 1000d;
-            var label = ToolHelpers.GetString(sectionLine, "label", "A-A");
-
-            var extension = drawingDoc.GetType().GetProperty("Extension")?.GetValue(drawingDoc);
-            if (extension is null)
+            var fallbackMacro = ToolHelpers.GetDictionary(args, "fallback_macro");
+            var result = api.AddSectionView(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                throw new InvalidOperationException("Drawing extension is unavailable.");
-            }
-
-            var parentSelected = extension.GetType().GetMethod("SelectByID2")?.Invoke(extension, [parentViewName, "DRAWINGVIEW", 0d, 0d, 0d, false, 0, null, 0]) is bool selected && selected;
-            if (!parentSelected)
-            {
-                throw new InvalidOperationException($"Parent view '{parentViewName}' could not be selected.");
-            }
-
-            object? sectionView = null;
-            sectionView = drawingDoc.GetType().GetMethod("CreateSectionViewAt5")?.Invoke(drawingDoc, [xMeters, yMeters, x1, y1, x2, y2, 0, label, 0, false])
-                ?? drawingDoc.GetType().GetMethod("CreateSectionViewAt4")?.Invoke(drawingDoc, [xMeters, yMeters, x1, y1, x2, y2, 0, label, 0])
-                ?? drawingDoc.GetType().GetMethod("CreateSectionViewAt3")?.Invoke(drawingDoc, [xMeters, yMeters, x1, y1, x2, y2, 0, label]);
-
-            drawingDoc.GetType().GetMethod("ClearSelection2")?.Invoke(drawingDoc, [true]);
-
-            if (sectionView is null)
-            {
-                throw new InvalidOperationException("SolidWorks did not create a section view with the supplied line and insertion point.");
-            }
-
-            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["created"] = true,
-                ["parentView"] = parentViewName,
-                ["sectionLabel"] = label,
+                ["parentView"] = ToolHelpers.GetString(args, "parentView"),
                 ["xMm"] = ToolHelpers.GetDouble(args, "x"),
                 ["yMm"] = ToolHelpers.GetDouble(args, "y"),
-            }));
+                ["x1Mm"] = ToolHelpers.GetDouble(sectionLine, "x1", 0),
+                ["y1Mm"] = ToolHelpers.GetDouble(sectionLine, "y1", 0),
+                ["x2Mm"] = ToolHelpers.GetDouble(sectionLine, "x2", 0),
+                ["y2Mm"] = ToolHelpers.GetDouble(sectionLine, "y2", 0),
+                ["label"] = ToolHelpers.GetString(sectionLine, "label", "A-A"),
+                ["fallbackMacroPath"] = ToolHelpers.GetString(fallbackMacro, "macro_path"),
+                ["fallbackModuleName"] = ToolHelpers.GetString(fallbackMacro, "module_name", "main"),
+                ["fallbackProcedureName"] = ToolHelpers.GetString(fallbackMacro, "procedure_name", "main"),
+            });
+            return ValueTask.FromResult<object?>(ToolHelpers.SuccessObject(result));
         }
         catch (Exception ex)
         {

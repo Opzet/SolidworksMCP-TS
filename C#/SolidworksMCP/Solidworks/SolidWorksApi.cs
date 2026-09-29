@@ -10,6 +10,7 @@ using System.Text.Json;
 public sealed class SolidWorksApi
 {
     private const int SwRestore = 9;
+    private const int SwInputDimValOnCreateToggle = 10;
 
     private readonly string? outputRoot;
     private object? swApp;
@@ -948,25 +949,20 @@ public sealed class SolidWorksApi
 
         var sketchManager = InvokeProperty(currentModel, "SketchManager") ?? throw new InvalidOperationException("SketchManager unavailable");
         _ = GetActiveSketch(currentModel) ?? throw new InvalidOperationException("No sketch is open. Create or edit a sketch first.");
+        var normalizedKind = kind.Trim().ToLowerInvariant();
+        var sketchContext = string.IsNullOrWhiteSpace(selection.SketchName)
+            ? InferSketchNameFromSelectionHandles(selection) ?? "<active>"
+            : selection.SketchName;
+
         var entities = ResolveSketchRelationEntities(selection).ToArray();
         if (entities.Length == 0)
         {
             throw new InvalidOperationException("Dimension selection must include sketch_segments or sketch_points.");
         }
 
-        var selected = 0;
-        foreach (var entity in entities)
-        {
-            var appended = selected > 0;
-            if (!TrySelectEntity(entity, appended))
-            {
-                throw new InvalidOperationException("Failed to select one or more sketch entities for dimensioning.");
-            }
+        ValidateSketchDimensionSelectionCount(normalizedKind, entities.Length);
 
-            selected++;
-        }
-
-        var methodName = kind.Trim().ToLowerInvariant() switch
+        var requestedMethodName = normalizedKind switch
         {
             "auto" => "AddDimension2",
             "horizontal" => "AddHorizontalDimension2",
@@ -976,19 +972,59 @@ public sealed class SolidWorksApi
             _ => throw new ArgumentException($"Unsupported dimension kind: {kind}", nameof(kind)),
         };
 
+        var attemptedMethods = new List<string> { requestedMethodName };
+        var creationDiagnostics = new List<string>();
+        var xMeters = placeXmm / 1000d;
+        var yMeters = placeYmm / 1000d;
+        var zMeters = placeZmm / 1000d;
+
         object? created;
+        var previousInputDialogPreference = TrySetDimensionInputDialogSuppressed();
         try
         {
-            created = TryInvoke(sketchManager, methodName, placeXmm / 1000d, placeYmm / 1000d, placeZmm / 1000d);
+            created = TryCreateSketchDimension(sketchManager, entities, requestedMethodName, xMeters, yMeters, zMeters, out var primaryDiagnostics);
+            if (!string.IsNullOrWhiteSpace(primaryDiagnostics))
+            {
+                creationDiagnostics.Add(primaryDiagnostics);
+            }
+
+            if (created is null && normalizedKind is "horizontal" or "vertical" && entities.Length == 1)
+            {
+                if (TryGetSketchSegmentEndpoints(entities[0], out var startPoint, out var endPoint)
+                    && startPoint is not null
+                    && endPoint is not null)
+                {
+                    attemptedMethods.Add(requestedMethodName + "(segment_endpoints)");
+                    created = TryCreateSketchDimension(sketchManager, [startPoint, endPoint], requestedMethodName, xMeters, yMeters, zMeters, out var endpointDiagnostics);
+                    if (!string.IsNullOrWhiteSpace(endpointDiagnostics))
+                    {
+                        creationDiagnostics.Add(endpointDiagnostics);
+                    }
+                }
+            }
+
+            if (created is null && normalizedKind is "horizontal" or "vertical")
+            {
+                const string fallbackMethodName = "AddDimension2";
+                attemptedMethods.Add(fallbackMethodName);
+                created = TryCreateSketchDimension(sketchManager, entities, fallbackMethodName, xMeters, yMeters, zMeters, out var fallbackDiagnostics);
+                if (!string.IsNullOrWhiteSpace(fallbackDiagnostics))
+                {
+                    creationDiagnostics.Add(fallbackDiagnostics);
+                }
+            }
         }
         finally
         {
-            TryClearSelection();
+            RestoreDimensionInputDialogPreference(previousInputDialogPreference);
         }
 
         if (created is null)
         {
-            throw new InvalidOperationException($"SOLIDWORKS did not create a {kind} dimension for that sketch selection.");
+            var diagnosticsText = creationDiagnostics.Count > 0
+                ? $" Diagnostics: {string.Join(" | ", creationDiagnostics)}"
+                : string.Empty;
+            throw new InvalidOperationException($"SOLIDWORKS did not create a {normalizedKind} dimension. Attempted methods: {string.Join(", ", attemptedMethods)}. Sketch: '{sketchContext}'. Selection: {DescribeSketchSelection(selection)}.{diagnosticsText}");
         }
 
         var dimension = TryInvoke(created, "GetDimension2", 0) ?? TryInvoke(created, "GetDimension") ?? created;
@@ -1515,6 +1551,15 @@ public sealed class SolidWorksApi
     public object AddLine(Dictionary<string, object?> parameters)
     {
         EnsureCurrentModel();
+        if (currentModel is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "No active model",
+            };
+        }
+
         var x1 = GetNumber(parameters, "x1", 0);
         var y1 = GetNumber(parameters, "y1", 0);
         var z1 = GetNumber(parameters, "z1", 0);
@@ -1522,15 +1567,26 @@ public sealed class SolidWorksApi
         var y2 = GetNumber(parameters, "y2", 0);
         var z2 = GetNumber(parameters, "z2", 0);
 
-        var sketchManager = InvokeProperty(currentModel!, "SketchManager");
-        var line = TryInvoke(sketchManager!, "CreateLine", x1 / 1000d, y1 / 1000d, z1 / 1000d, x2 / 1000d, y2 / 1000d, z2 / 1000d);
-        if (line is not null)
+        var sketchManager = InvokeProperty(currentModel, "SketchManager");
+        if (sketchManager is null)
         {
             return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["error"] = "SketchManager unavailable",
+            };
+        }
+
+        var line = TryInvoke(sketchManager, "CreateLine", x1 / 1000d, y1 / 1000d, z1 / 1000d, x2 / 1000d, y2 / 1000d, z2 / 1000d);
+        if (line is not null)
+        {
+            var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["success"] = true,
                 ["lineId"] = $"line_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
             };
+            AttachSketchSelectionPayload(result, BuildSketchSelectionPayload(sketchManager, line));
+            return result;
         }
 
         return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -1572,17 +1628,22 @@ public sealed class SolidWorksApi
             ?? TryInvoke(sketchManager, "CreateCircle2", centerX, centerY, centerZ, radius)
             ?? TryInvoke(sketchManager, "CreateCircleByRadius", centerX, centerY, centerZ, radius);
 
-        return circle is null
-            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        if (circle is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["success"] = false,
                 ["error"] = "Failed to create circle",
-            }
-            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["success"] = true,
-                ["circleId"] = $"circle_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
             };
+        }
+
+        var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["circleId"] = $"circle_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+        };
+        AttachSketchSelectionPayload(result, BuildSketchSelectionPayload(sketchManager, circle));
+        return result;
     }
 
     public object AddRectangle(Dictionary<string, object?> parameters)
@@ -1615,17 +1676,22 @@ public sealed class SolidWorksApi
         var rectangle = TryInvoke(sketchManager, "CreateCornerRectangle", x1 / 1000d, y1 / 1000d, 0d, x2 / 1000d, y2 / 1000d, 0d)
             ?? TryInvoke(sketchManager, "CreateCenterRectangle", ((x1 + x2) / 2d) / 1000d, ((y1 + y2) / 2d) / 1000d, 0d, Math.Abs(x2 - x1) / 1000d, Math.Abs(y2 - y1) / 1000d);
 
-        return rectangle is null
-            ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        if (rectangle is null)
+        {
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["success"] = false,
                 ["error"] = "Failed to create rectangle",
-            }
-            : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["success"] = true,
-                ["rectangleId"] = $"rect_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
             };
+        }
+
+        var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["rectangleId"] = $"rect_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+        };
+        AttachSketchSelectionPayload(result, BuildSketchSelectionPayload(sketchManager, rectangle));
+        return result;
     }
 
     public object ExitSketch(bool rebuild)
@@ -2031,11 +2097,17 @@ public sealed class SolidWorksApi
         return GetString(currentModel, "GetPathName");
     }
 
-    public string SaveDocument(string filePath)
+    public string SaveDocument(string filePath, bool allowExternalPath = false)
     {
         EnsureCurrentModel();
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         var normalizedPath = NormalizeManagedOutputPath(filePath);
+
+        if (!allowExternalPath && !IsPathWithinRoot(normalizedPath, GetDefaultAutoWorksRoot()))
+        {
+            throw new InvalidOperationException($"Saving outside Desktop\\AutoWorks requires explicit user request. Blocked path: {normalizedPath}");
+        }
+
         EnsureParentDirectory(normalizedPath);
 
         if (currentModel is null)
@@ -2176,6 +2248,43 @@ public sealed class SolidWorksApi
             .Select(item => Convert.ToString(item) ?? string.Empty)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .ToList();
+    }
+
+    public Dictionary<string, object?> GetDrawingCapabilities()
+    {
+        EnsureCurrentModel();
+        if (currentModel is null || GetSolidWorksDocumentType(currentModel) != 3)
+        {
+            throw new InvalidOperationException("Current document must be a drawing");
+        }
+
+        var extension = GetProperty(currentModel, "Extension");
+        var drawingType = currentModel.GetType();
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["api"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["activateView"] = HasMethod(currentModel, "ActivateView"),
+                ["selectById2"] = extension is not null && HasMethod(extension, "SelectByID2"),
+                ["createSectionViewAt5"] = drawingType.GetMethod("CreateSectionViewAt5") is not null,
+                ["createSectionViewAt4"] = drawingType.GetMethod("CreateSectionViewAt4") is not null,
+                ["createSectionViewAt3"] = drawingType.GetMethod("CreateSectionViewAt3") is not null,
+            },
+            ["fallbackStrategy"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["primary"] = "API-first declarative workflow with validation",
+                ["secondary"] = "Controlled macro bridge fallback when API returns null or method unavailable",
+                ["uiAutomationDefault"] = false,
+                ["uiAutomationPolicy"] = "Last resort only; keep disabled unless explicitly required for a specific unsupported operation.",
+            },
+            ["recommendations"] = new List<object?>
+            {
+                "Use list_drawing_views and activate_drawing_view before annotation/section commands.",
+                "Validate post-conditions after each drawing operation (for example, expected new view appears).",
+                "Prefer macro fallback for unsupported operations instead of mouse/screen automation.",
+            },
+        };
     }
 
     public Dictionary<string, object?> ActivateSheet(string sheetName)
@@ -2329,7 +2438,187 @@ public sealed class SolidWorksApi
         };
     }
 
+    public Dictionary<string, object?> AddSectionView(Dictionary<string, object?> parameters)
+    {
+        EnsureCurrentModel();
+        if (currentModel is null || GetSolidWorksDocumentType(currentModel) != 3)
+        {
+            throw new InvalidOperationException("Current document must be a drawing");
+        }
+
+        ArgumentNullException.ThrowIfNull(parameters);
+        var parentViewName = GetString(parameters, "parentView");
+        if (string.IsNullOrWhiteSpace(parentViewName))
+        {
+            throw new ArgumentException("parentView is required.", nameof(parameters));
+        }
+
+        var xMeters = GetNumber(parameters, "xMm", 0) / 1000d;
+        var yMeters = GetNumber(parameters, "yMm", 0) / 1000d;
+        var x1 = GetNumber(parameters, "x1Mm", 0) / 1000d;
+        var y1 = GetNumber(parameters, "y1Mm", 0) / 1000d;
+        var x2 = GetNumber(parameters, "x2Mm", 0) / 1000d;
+        var y2 = GetNumber(parameters, "y2Mm", 0) / 1000d;
+        var label = GetString(parameters, "label", "A-A");
+
+        var diagnostics = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["apiFirst"] = true,
+            ["uiAutomationUsed"] = false,
+            ["uiAutomationPolicy"] = "UI automation is not used by default. Prefer API and macro fallback.",
+        };
+
+        var extension = GetProperty(currentModel, "Extension");
+        if (extension is null)
+        {
+            diagnostics["failureStage"] = "extension";
+            diagnostics["message"] = "Drawing extension is unavailable.";
+            return TryRunSectionMacroFallback(parameters, diagnostics) ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["parentView"] = parentViewName,
+                ["diagnostics"] = diagnostics,
+                ["message"] = "Drawing extension is unavailable and no macro fallback was provided.",
+            };
+        }
+
+        var beforeViews = SnapshotDrawingViewNames(currentModel);
+        var parentSelected = TryInvoke(extension, "SelectByID2", parentViewName, "DRAWINGVIEW", 0d, 0d, 0d, false, 0, null, 0) is bool selected && selected;
+        if (!parentSelected)
+        {
+            diagnostics["failureStage"] = "select-parent";
+            diagnostics["message"] = $"Parent view '{parentViewName}' could not be selected.";
+            return TryRunSectionMacroFallback(parameters, diagnostics) ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["parentView"] = parentViewName,
+                ["diagnostics"] = diagnostics,
+                ["message"] = $"Parent view '{parentViewName}' could not be selected and no macro fallback was provided.",
+            };
+        }
+
+        List<string> attempted = [];
+        List<string> errors = [];
+        object? sectionView;
+        try
+        {
+            sectionView = TryInvokeWithDiagnostics(currentModel, attempted, errors, "CreateSectionViewAt5", xMeters, yMeters, x1, y1, x2, y2, 0, label, 0, false)
+                ?? TryInvokeWithDiagnostics(currentModel, attempted, errors, "CreateSectionViewAt4", xMeters, yMeters, x1, y1, x2, y2, 0, label, 0)
+                ?? TryInvokeWithDiagnostics(currentModel, attempted, errors, "CreateSectionViewAt3", xMeters, yMeters, x1, y1, x2, y2, 0, label);
+        }
+        finally
+        {
+            TryClearSelection();
+        }
+
+        var afterViews = SnapshotDrawingViewNames(currentModel);
+        var createdViewName = afterViews.Except(beforeViews, StringComparer.OrdinalIgnoreCase).FirstOrDefault()
+            ?? GetString(sectionView, "Name")
+            ?? GetString(sectionView, "GetName2");
+        var created = sectionView is not null || afterViews.Count > beforeViews.Count;
+
+        diagnostics["attemptedMethods"] = attempted.Cast<object?>().ToList();
+        diagnostics["errors"] = errors.Cast<object?>().ToList();
+        diagnostics["viewsBefore"] = beforeViews.Cast<object?>().ToList();
+        diagnostics["viewsAfter"] = afterViews.Cast<object?>().ToList();
+
+        if (!created)
+        {
+            diagnostics["failureStage"] = "create-section-view";
+            diagnostics["message"] = "SolidWorks did not create a section view via available API methods.";
+            return TryRunSectionMacroFallback(parameters, diagnostics) ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["parentView"] = parentViewName,
+                ["sectionLabel"] = label,
+                ["diagnostics"] = diagnostics,
+                ["message"] = "Section view creation failed via API and no macro fallback was provided.",
+            };
+        }
+
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["success"] = true,
+            ["strategy"] = "api",
+            ["parentView"] = parentViewName,
+            ["sectionLabel"] = label,
+            ["sectionView"] = createdViewName ?? string.Empty,
+            ["xMm"] = GetNumber(parameters, "xMm", 0),
+            ["yMm"] = GetNumber(parameters, "yMm", 0),
+            ["validation"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["viewDelta"] = afterViews.Count - beforeViews.Count,
+                ["createdViewDetected"] = !string.IsNullOrWhiteSpace(createdViewName),
+            },
+            ["diagnostics"] = diagnostics,
+            ["message"] = "Created section view using API workflow.",
+        };
+    }
+
     public object? GetApp() => swApp;
+
+    private static IReadOnlyList<string> SnapshotDrawingViewNames(object drawing)
+    {
+        ArgumentNullException.ThrowIfNull(drawing);
+        var names = new List<string>();
+        var currentView = TryInvoke(drawing, "GetFirstView");
+        var index = 0;
+        while (currentView is not null && index < 500)
+        {
+            var name = GetString(currentView, "Name") ?? GetString(currentView, "GetName2") ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                names.Add(name);
+            }
+
+            currentView = TryInvoke(currentView, "GetNextView");
+            index++;
+        }
+
+        return names;
+    }
+
+    private Dictionary<string, object?>? TryRunSectionMacroFallback(Dictionary<string, object?> parameters, Dictionary<string, object?> diagnostics)
+    {
+        var macroPath = GetString(parameters, "fallbackMacroPath");
+        if (string.IsNullOrWhiteSpace(macroPath))
+        {
+            return null;
+        }
+
+        var moduleName = GetString(parameters, "fallbackModuleName", "main");
+        var procedureName = GetString(parameters, "fallbackProcedureName", "main");
+
+        try
+        {
+            var result = RunMacro(macroPath, moduleName, procedureName);
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = true,
+                ["strategy"] = "macro-fallback",
+                ["macroPath"] = macroPath,
+                ["moduleName"] = moduleName,
+                ["procedureName"] = procedureName,
+                ["macroResult"] = result,
+                ["diagnostics"] = diagnostics,
+                ["message"] = "API path did not complete; macro fallback was executed.",
+            };
+        }
+        catch (Exception ex)
+        {
+            diagnostics["macroFallbackError"] = ex.Message;
+            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["success"] = false,
+                ["strategy"] = "macro-fallback",
+                ["macroPath"] = macroPath,
+                ["moduleName"] = moduleName,
+                ["procedureName"] = procedureName,
+                ["diagnostics"] = diagnostics,
+                ["message"] = "API path did not complete and macro fallback failed.",
+            };
+        }
+    }
 
     [SupportedOSPlatform("windows")]
     private static object CreateSolidWorksApplication()
@@ -2847,6 +3136,87 @@ public sealed class SolidWorksApi
         TryClearSelection();
         var count = 0;
 
+        foreach (var faceHandle in selection.FaceHandles ?? [])
+        {
+            if (!TryParseEntityHandleIndex("face", faceHandle, out var faceIndex))
+            {
+                continue;
+            }
+
+            var face = ResolveFaceByIndex(faceIndex);
+            if (!TrySelectEntity(face, count > 0))
+            {
+                throw new InvalidOperationException($"Failed to select face: {faceHandle}");
+            }
+
+            count++;
+        }
+
+        foreach (var edgeHandle in selection.EdgeHandles ?? [])
+        {
+            if (!TryParseEntityHandleIndex("edge", edgeHandle, out var edgeIndex))
+            {
+                continue;
+            }
+
+            var edge = ResolveEdgeByIndex(edgeIndex);
+            if (!TrySelectEntity(edge, count > 0))
+            {
+                throw new InvalidOperationException($"Failed to select edge: {edgeHandle}");
+            }
+
+            count++;
+        }
+
+        foreach (var vertexHandle in selection.VertexHandles ?? [])
+        {
+            if (!TryParseEntityHandleIndex("vertex", vertexHandle, out var vertexIndex))
+            {
+                continue;
+            }
+
+            var vertex = ResolveVertexByIndex(vertexIndex);
+            if (!TrySelectEntity(vertex, count > 0))
+            {
+                throw new InvalidOperationException($"Failed to select vertex: {vertexHandle}");
+            }
+
+            count++;
+        }
+
+        foreach (var faceIndex in selection.Faces ?? [])
+        {
+            var face = ResolveFaceByIndex(faceIndex);
+            if (!TrySelectEntity(face, count > 0))
+            {
+                throw new InvalidOperationException($"Failed to select face index: {faceIndex}");
+            }
+
+            count++;
+        }
+
+        foreach (var edgeIndex in selection.Edges ?? [])
+        {
+            var edge = ResolveEdgeByIndex(edgeIndex);
+            if (!TrySelectEntity(edge, count > 0))
+            {
+                throw new InvalidOperationException($"Failed to select edge index: {edgeIndex}");
+            }
+
+            count++;
+        }
+
+        foreach (var vertexIndex in selection.Vertices ?? [])
+        {
+            var vertex = ResolveVertexByIndex(vertexIndex);
+            if (!TrySelectEntity(vertex, count > 0))
+            {
+                throw new InvalidOperationException($"Failed to select vertex index: {vertexIndex}");
+            }
+
+            count++;
+        }
+
         foreach (var planeName in selection.Planes ?? [])
         {
             var feature = TryInvoke(currentModel, "FeatureByName", planeName);
@@ -2926,6 +3296,134 @@ public sealed class SolidWorksApi
         return count;
     }
 
+    private object ResolveFaceByIndex(int index)
+    {
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (index < 0)
+        {
+            throw new InvalidOperationException($"Face index {index} is out of range.");
+        }
+
+        var currentIndex = 0;
+        foreach (var body in GetModelBodies(currentModel))
+        {
+            foreach (var face in AsEnumerable(TryInvoke(body, "GetFaces")))
+            {
+                if (currentIndex == index)
+                {
+                    return face;
+                }
+
+                currentIndex++;
+            }
+        }
+
+        throw new InvalidOperationException($"Face index {index} is out of range (0..{Math.Max(currentIndex - 1, 0)}).");
+    }
+
+    private object ResolveEdgeByIndex(int index)
+    {
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (index < 0)
+        {
+            throw new InvalidOperationException($"Edge index {index} is out of range.");
+        }
+
+        var currentIndex = 0;
+        foreach (var body in GetModelBodies(currentModel))
+        {
+            foreach (var edge in AsEnumerable(TryInvoke(body, "GetEdges")))
+            {
+                if (currentIndex == index)
+                {
+                    return edge;
+                }
+
+                currentIndex++;
+            }
+        }
+
+        throw new InvalidOperationException($"Edge index {index} is out of range (0..{Math.Max(currentIndex - 1, 0)}).");
+    }
+
+    private object ResolveVertexByIndex(int index)
+    {
+        if (currentModel is null)
+        {
+            throw new InvalidOperationException("No model open");
+        }
+
+        if (index < 0)
+        {
+            throw new InvalidOperationException($"Vertex index {index} is out of range.");
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var currentIndex = 0;
+        foreach (var body in GetModelBodies(currentModel))
+        {
+            foreach (var edge in AsEnumerable(TryInvoke(body, "GetEdges")))
+            {
+                foreach (var member in new[] { "GetStartVertex", "GetEndVertex" })
+                {
+                    var vertex = TryInvoke(edge, member);
+                    var pointArray = vertex is null ? [] : GetArrayFromObject(vertex, "Point");
+                    if (pointArray.Length < 3)
+                    {
+                        continue;
+                    }
+
+                    var key = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Math.Round(pointArray[0], 9)}|{Math.Round(pointArray[1], 9)}|{Math.Round(pointArray[2], 9)}");
+                    if (!seen.Add(key))
+                    {
+                        continue;
+                    }
+
+                    if (currentIndex == index)
+                    {
+                        return vertex;
+                    }
+
+                    currentIndex++;
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"Vertex index {index} is out of range (0..{Math.Max(currentIndex - 1, 0)}).");
+    }
+
+    private static bool TryParseEntityHandleIndex(string expectedKind, string handle, out int index)
+    {
+        index = -1;
+        if (string.IsNullOrWhiteSpace(handle))
+        {
+            return false;
+        }
+
+        var token = handle.Trim();
+        var separatorIndex = token.IndexOf(':');
+        if (separatorIndex >= 0)
+        {
+            var kind = token[..separatorIndex];
+            if (!string.Equals(kind, expectedKind, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            token = token[(separatorIndex + 1)..];
+        }
+
+        return int.TryParse(token, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out index);
+    }
+
     private Dictionary<string, object?> ExtractTransformOrigin(object? transform)
     {
         if (transform is null)
@@ -2993,7 +3491,9 @@ public sealed class SolidWorksApi
             return modelPath;
         }
 
-        var directory = Path.Combine(Path.GetTempPath(), "solidworks-mcp-models");
+        var directory = outputRoot is { Length: > 0 }
+            ? Path.Combine(outputRoot, "Models")
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "AutoWorks", "Models");
         Directory.CreateDirectory(directory);
 
         var documentType = GetSolidWorksDocumentType(model);
@@ -3437,7 +3937,8 @@ public sealed class SolidWorksApi
 
     private void ExecuteExtrusionViaMacro(double depthInMeters, bool reverse)
     {
-        var macroDir = Path.Combine(Path.GetTempPath(), "solidworks-mcp-macros");
+        var macroRoot = outputRoot is { Length: > 0 } ? outputRoot : GetDefaultAutoWorksRoot();
+        var macroDir = Path.Combine(macroRoot, "Macros");
         var macroPath = Path.Combine(macroDir, $"extrusion_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.swp");
         Directory.CreateDirectory(macroDir);
 
@@ -4026,6 +4527,16 @@ End Sub
         return value?.ToString();
     }
 
+    private static string GetString(Dictionary<string, object?> dictionary, string key, string defaultValue = "")
+    {
+        if (dictionary.TryGetValue(key, out var value))
+        {
+            return Convert.ToString(value) ?? defaultValue;
+        }
+
+        return defaultValue;
+    }
+
     private static object? GetMethodValue(object? target, string methodName)
     {
         return TryInvoke(target, methodName);
@@ -4424,7 +4935,10 @@ End Sub
     private IEnumerable<object> ResolveSketchRelationEntities(SelectionSpec selection)
     {
         ArgumentNullException.ThrowIfNull(selection);
-        var sketch = ResolveSketch(selection.SketchName) ?? throw new InvalidOperationException($"Sketch not found: {selection.SketchName ?? "<active>"}");
+        var resolvedSketchName = string.IsNullOrWhiteSpace(selection.SketchName)
+            ? InferSketchNameFromSelectionHandles(selection)
+            : selection.SketchName;
+        var sketch = ResolveSketch(resolvedSketchName) ?? throw new InvalidOperationException($"Sketch not found: {resolvedSketchName ?? "<active>"}");
         var specificSketch = TryInvoke(sketch, "GetSpecificFeature2") ?? sketch;
 
         foreach (var handle in selection.SketchSegmentHandles ?? [])
@@ -4452,6 +4966,264 @@ End Sub
         }
     }
 
+    private static void AttachSketchSelectionPayload(Dictionary<string, object?> result, Dictionary<string, object?> selection)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(selection);
+        if (selection.Count == 0)
+        {
+            return;
+        }
+
+        result["selection"] = selection;
+        if (selection.TryGetValue("sketch_name", out var sketchName))
+        {
+            result["sketch_name"] = sketchName;
+        }
+
+        if (selection.TryGetValue("sketch_segments", out var sketchSegments))
+        {
+            result["sketch_segments"] = sketchSegments;
+        }
+
+        if (selection.TryGetValue("sketch_points", out var sketchPoints))
+        {
+            result["sketch_points"] = sketchPoints;
+        }
+    }
+
+    private static Dictionary<string, object?> BuildSketchSelectionPayload(object sketchManager, object createdEntity)
+    {
+        ArgumentNullException.ThrowIfNull(sketchManager);
+        ArgumentNullException.ThrowIfNull(createdEntity);
+
+        var entities = AsEnumerable(createdEntity);
+        if (entities.Count == 0)
+        {
+            entities.Add(createdEntity);
+        }
+
+        var segmentHandles = new List<object?>();
+        foreach (var entity in entities)
+        {
+            var handle = GetString(entity, "GetNameForSelection");
+            if (!string.IsNullOrWhiteSpace(handle))
+            {
+                segmentHandles.Add(handle);
+            }
+        }
+
+        var sketchName = segmentHandles
+            .OfType<string>()
+            .Select(static handle => TryExtractSketchNameFromEntityHandle(handle, out var name) ? name : null)
+            .FirstOrDefault(static name => !string.IsNullOrWhiteSpace(name));
+        if (string.IsNullOrWhiteSpace(sketchName))
+        {
+            var activeSketch = GetProperty(sketchManager, "ActiveSketch") ?? TryInvoke(sketchManager, "GetActiveSketch2");
+            sketchName = GetString(activeSketch, "Name");
+        }
+
+        var selection = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(sketchName))
+        {
+            selection["sketch_name"] = sketchName;
+        }
+
+        if (segmentHandles.Count > 0)
+        {
+            selection["sketch_segments"] = segmentHandles;
+        }
+
+        return selection;
+    }
+
+    private bool? TrySetDimensionInputDialogSuppressed()
+    {
+        if (swApp is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var rawPreference = TryInvoke(swApp, "GetUserPreferenceToggle", SwInputDimValOnCreateToggle);
+            if (rawPreference is null)
+            {
+                return null;
+            }
+
+            var previousPreference = Convert.ToBoolean(rawPreference);
+            _ = TryInvoke(swApp, "SetUserPreferenceToggle", SwInputDimValOnCreateToggle, false);
+            return previousPreference;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Info("Could not suppress the SOLIDWORKS dimension-input dialog.", new { ex.Message });
+            return null;
+        }
+    }
+
+    private void RestoreDimensionInputDialogPreference(bool? previousPreference)
+    {
+        if (swApp is null || !previousPreference.HasValue)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = TryInvoke(swApp, "SetUserPreferenceToggle", SwInputDimValOnCreateToggle, previousPreference.Value);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Info("Could not restore the SOLIDWORKS dimension-input dialog setting.", new { ex.Message });
+        }
+    }
+
+    private object? TryCreateSketchDimension(object sketchManager, IReadOnlyList<object> entities, string methodName, double xMeters, double yMeters, double zMeters, out string diagnostics)
+    {
+        ArgumentNullException.ThrowIfNull(sketchManager);
+        ArgumentNullException.ThrowIfNull(entities);
+        ArgumentException.ThrowIfNullOrWhiteSpace(methodName);
+
+        diagnostics = string.Empty;
+        if (entities.Count == 0)
+        {
+            diagnostics = "No entities were provided for dimension creation.";
+            return null;
+        }
+
+        var selected = 0;
+        try
+        {
+            foreach (var entity in entities)
+            {
+                if (!TrySelectEntity(entity, selected > 0))
+                {
+                    diagnostics = $"Failed to select sketch entity {selected + 1} of {entities.Count}.";
+                    return null;
+                }
+
+                selected++;
+            }
+
+            var created = TryInvoke(sketchManager, methodName, xMeters, yMeters, zMeters);
+            if (created is null)
+            {
+                diagnostics = $"{methodName} returned null for {selected} selected sketch entities.";
+            }
+
+            return created;
+        }
+        catch (Exception ex)
+        {
+            diagnostics = $"{methodName} threw {ex.GetType().Name}: {ex.Message}";
+            return null;
+        }
+        finally
+        {
+            TryClearSelection();
+        }
+    }
+
+    private static bool TryGetSketchSegmentEndpoints(object segment, out object? startPoint, out object? endPoint)
+    {
+        ArgumentNullException.ThrowIfNull(segment);
+
+        startPoint = TryInvoke(segment, "GetStartPoint2") ?? TryInvoke(segment, "IGetStartPoint2") ?? TryInvoke(segment, "GetStartPoint");
+        endPoint = TryInvoke(segment, "GetEndPoint2") ?? TryInvoke(segment, "IGetEndPoint2") ?? TryInvoke(segment, "GetEndPoint");
+
+        return startPoint is not null && endPoint is not null;
+    }
+
+    private static void ValidateSketchDimensionSelectionCount(string normalizedKind, int selectedEntities)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(normalizedKind);
+        if (selectedEntities <= 0)
+        {
+            throw new InvalidOperationException("No sketch entities were selected for dimensioning.");
+        }
+
+        if (normalizedKind is "radius" or "diameter")
+        {
+            if (selectedEntities != 1)
+            {
+                throw new InvalidOperationException($"{normalizedKind} dimensions require exactly one sketch entity, but {selectedEntities} were provided.");
+            }
+
+            return;
+        }
+
+        if (selectedEntities > 2)
+        {
+            throw new InvalidOperationException($"{normalizedKind} dimensions support at most two sketch entities, but {selectedEntities} were provided.");
+        }
+    }
+
+    private static string DescribeSketchSelection(SelectionSpec selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        var segmentHandles = string.Join(", ", selection.SketchSegmentHandles ?? []);
+        var pointHandles = string.Join(", ", selection.SketchPointHandles ?? []);
+        var segmentIndexes = selection.SketchSegments is null ? string.Empty : string.Join(", ", selection.SketchSegments);
+        var pointIndexes = selection.SketchPoints is null ? string.Empty : string.Join(", ", selection.SketchPoints);
+
+        return $"sketch_name='{selection.SketchName ?? string.Empty}', sketch_segments=[{segmentHandles}], sketch_points=[{pointHandles}], sketch_segment_indexes=[{segmentIndexes}], sketch_point_indexes=[{pointIndexes}]";
+    }
+
+    private static string? InferSketchNameFromSelectionHandles(SelectionSpec selection)
+    {
+        foreach (var handle in selection.SketchSegmentHandles ?? [])
+        {
+            if (TryExtractSketchNameFromEntityHandle(handle, out var sketchName))
+            {
+                return sketchName;
+            }
+        }
+
+        foreach (var handle in selection.SketchPointHandles ?? [])
+        {
+            if (TryExtractSketchNameFromEntityHandle(handle, out var sketchName))
+            {
+                return sketchName;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryExtractSketchNameFromEntityHandle(string handle, out string sketchName)
+    {
+        sketchName = string.Empty;
+        if (string.IsNullOrWhiteSpace(handle))
+        {
+            return false;
+        }
+
+        var token = handle.Trim();
+        var atIndex = token.LastIndexOf('@');
+        if (atIndex >= 0 && atIndex < token.Length - 1)
+        {
+            sketchName = token[(atIndex + 1)..].Trim();
+            return !string.IsNullOrWhiteSpace(sketchName);
+        }
+
+        var colonIndex = token.IndexOf(':');
+        if (colonIndex > 0)
+        {
+            var candidate = token[..colonIndex].Trim();
+            if (!string.IsNullOrWhiteSpace(candidate)
+                && !string.Equals(candidate, "sketch_segment", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(candidate, "sketch_point", StringComparison.OrdinalIgnoreCase))
+            {
+                sketchName = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static object GetSketchEntityAtIndex(object sketch, string primaryMethod, string secondaryMethod, int index, string label)
     {
         var entries = AsEnumerable(TryInvoke(sketch, primaryMethod) ?? TryInvoke(sketch, secondaryMethod));
@@ -4467,6 +5239,11 @@ End Sub
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(handle);
         var entries = AsEnumerable(TryInvoke(sketch, primaryMethod) ?? TryInvoke(sketch, secondaryMethod));
+        if (entries.Count == 0)
+        {
+            throw new InvalidOperationException($"Target sketch has no {label}s available for selection.");
+        }
+
         var normalizedHandle = handle.Trim();
 
         if (TryParseSketchEntityHandleIndex(normalizedHandle, out var parsedIndex) && parsedIndex >= 0 && parsedIndex < entries.Count)
@@ -4474,11 +5251,12 @@ End Sub
             return entries[parsedIndex];
         }
 
+        var canonicalHandle = CanonicalizeSketchEntityHandle(normalizedHandle);
         for (var index = 0; index < entries.Count; index++)
         {
             var candidate = entries[index];
             var candidateName = Convert.ToString(GetMethodValue(candidate, "GetNameForSelection")) ?? string.Empty;
-            if (string.Equals(candidateName, normalizedHandle, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(CanonicalizeSketchEntityHandle(candidateName), canonicalHandle, StringComparison.OrdinalIgnoreCase))
             {
                 return candidate;
             }
@@ -4490,8 +5268,7 @@ End Sub
     private static bool TryParseSketchEntityHandleIndex(string handle, out int index)
     {
         index = -1;
-        var colonIndex = handle.LastIndexOf(':');
-        var token = colonIndex >= 0 ? handle[(colonIndex + 1)..] : handle;
+        var token = CanonicalizeSketchEntityHandleToken(handle);
 
         if (token.StartsWith("Line", StringComparison.OrdinalIgnoreCase)
             || token.StartsWith("Point", StringComparison.OrdinalIgnoreCase)
@@ -4500,7 +5277,8 @@ End Sub
             || token.StartsWith("Spline", StringComparison.OrdinalIgnoreCase)
             || token.StartsWith("Ellipse", StringComparison.OrdinalIgnoreCase))
         {
-            var digits = new string(token.SkipWhile(ch => !char.IsDigit(ch)).ToArray());
+            var digitStart = token.TakeWhile(ch => !char.IsDigit(ch)).Count();
+            var digits = new string(token.Skip(digitStart).TakeWhile(char.IsDigit).ToArray());
             if (int.TryParse(digits, out var oneBasedIndex) && oneBasedIndex > 0)
             {
                 index = oneBasedIndex - 1;
@@ -4509,6 +5287,56 @@ End Sub
         }
 
         return int.TryParse(token, out index);
+    }
+
+    private static string CanonicalizeSketchEntityHandle(string handle)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(handle);
+        var token = CanonicalizeSketchEntityHandleToken(handle);
+        return ExpandSketchEntityAlias(token);
+    }
+
+    private static string CanonicalizeSketchEntityHandleToken(string handle)
+    {
+        var token = handle.Trim();
+        var colonIndex = token.LastIndexOf(':');
+        token = colonIndex >= 0 ? token[(colonIndex + 1)..] : token;
+
+        var atIndex = token.IndexOf('@');
+        if (atIndex >= 0)
+        {
+            var aliasPart = token[..atIndex];
+            var sketchPart = token[atIndex..];
+            return ExpandSketchEntityAlias(aliasPart) + sketchPart;
+        }
+
+        return ExpandSketchEntityAlias(token);
+    }
+
+    private static string ExpandSketchEntityAlias(string token)
+    {
+        if (token.Length < 2 || !char.IsLetter(token[0]) || !char.IsDigit(token[1]))
+        {
+            return token;
+        }
+
+        var prefix = token[0] switch
+        {
+            'L' or 'l' => "Line",
+            'P' or 'p' => "Point",
+            'A' or 'a' => "Arc",
+            'C' or 'c' => "Circle",
+            'S' or 's' => "Spline",
+            'E' or 'e' => "Ellipse",
+            _ => string.Empty,
+        };
+
+        if (prefix.Length == 0)
+        {
+            return token;
+        }
+
+        return prefix + token[1..];
     }
 
     private static bool TrySelectEntity(object entity, bool append)
@@ -4566,7 +5394,27 @@ End Sub
             return null;
         }
 
-        return Path.GetFullPath(outputRoot.Trim());
+        var normalized = Path.GetFullPath(outputRoot.Trim());
+        Directory.CreateDirectory(normalized);
+        return normalized;
+    }
+
+    private static string GetDefaultAutoWorksRoot()
+    {
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        return Path.GetFullPath(Path.Combine(desktop, "AutoWorks"));
+    }
+
+    private static bool IsPathWithinRoot(string path, string root)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var normalizedRoot = Path.GetFullPath(root);
+        var rootWithSeparator = normalizedRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? normalizedRoot
+            : normalizedRoot + Path.DirectorySeparatorChar;
+
+        return fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fullPath, normalizedRoot, StringComparison.OrdinalIgnoreCase);
     }
 
     private string NormalizeManagedOutputPath(string path)
@@ -4608,4 +5456,7 @@ End Sub
 
     private static bool HasProperty(object target, string propertyName)
         => target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase) is not null;
+
+    private static bool HasMethod(object target, string methodName)
+        => target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase) is not null;
 }

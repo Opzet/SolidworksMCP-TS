@@ -28,9 +28,15 @@ public sealed record SelectionSpec
 {
     public IReadOnlyList<int>? Faces { get; init; }
 
+    public IReadOnlyList<string>? FaceHandles { get; init; }
+
     public IReadOnlyList<int>? Edges { get; init; }
 
+    public IReadOnlyList<string>? EdgeHandles { get; init; }
+
     public IReadOnlyList<int>? Vertices { get; init; }
+
+    public IReadOnlyList<string>? VertexHandles { get; init; }
 
     public IReadOnlyList<string>? Planes { get; init; }
 

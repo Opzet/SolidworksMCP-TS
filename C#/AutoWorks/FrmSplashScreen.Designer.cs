@@ -119,7 +119,7 @@ namespace AutoWorks
             FormBorderStyle = FormBorderStyle.None;
             Name = "FrmSplashScreen";
             StartPosition = FormStartPosition.CenterScreen;
-            Text = "Camco Training Manager";
+            Text = "AutoWorks";
             Load += FrmSplashScreen_Load;
             panelFooter.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize) pictureBox1).EndInit( );
